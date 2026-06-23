@@ -444,6 +444,8 @@
     color: var(--text);
     overflow-x: auto;
     margin-top: 2.5rem;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .code-block .cm { color: var(--muted); }
@@ -858,14 +860,15 @@
 <span class="cm"># Flash firmware (PlatformIO)</span>
 <span class="kw">cd</span> firmware/
 <span class="kw">pio run</span> -e esp32-c3-supermini --target upload
+<span class="kw">cd</span> ..
 
 <span class="cm"># Make executable and scan</span>
-<span class="kw">chmod</span> +x ../nrcap32
+<span class="kw">chmod</span> +x nrcap32
 ./nrcap32 scan</div>
 
       <p style="margin-top:1rem;font-size:0.78rem;color:var(--muted)">
         Or use the automated installer:<br>
-        <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.85em">curl -sSL .../install.sh | bash</code>
+        <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.85em">curl -sSL https://raw.githubusercontent.com/0xhim4ri-81x/nrcap32/main/install.sh | bash</code>
       </p>
     </div>
   </div>
