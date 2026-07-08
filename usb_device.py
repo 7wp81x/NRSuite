@@ -472,7 +472,7 @@ def wrap_fd(fd: int):
 def describe_device(device) -> str:
     vid, pid = device.idVendor, device.idProduct
     label = ESP32_KNOWN.get((vid, pid), "Unknown device")
-    return f"{vid:04X}:{pid:04X}  {label}"
+    return f"{vid:04X}:{pid:04X} {label}"
 
 
 def get_cdc_endpoints(device):

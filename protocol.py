@@ -16,6 +16,7 @@ import json
 import struct
 import threading
 import queue
+import time
 
 MAGIC        = b'\xAD\xDE'
 TYPE_CMD     = 0x01
@@ -23,9 +24,15 @@ TYPE_RESP    = 0x02
 TYPE_EVENT   = 0x03
 TYPE_PCAP    = 0x04
 TYPE_ACK     = 0x05
+TYPE_HTML    = 0x06
 HEADER_SIZE  = 8          # 2 magic + 1 type + 1 id + 4 length (LE)
 MAX_PAYLOAD  = 65536      # sanity cap; real chunks are ≤512 B
 
+
+def build_html_frame(seq: int, chunk: bytes, is_last: bool) -> bytes:
+    # 2-byte seq (LE) + 1-byte is_last flag + raw chunk data
+    inner = struct.pack('<HB', seq, 1 if is_last else 0) + chunk
+    return build_frame(TYPE_HTML, 0, inner)
 
 #  Frame building 
 
@@ -139,6 +146,7 @@ class Protocol:
         self._running  = False
 
         self._dispatch_q  = queue.Queue(maxsize=2048)
+        self._html_resp_q  = queue.Queue(maxsize=16)
 
         self.on_event  = None   # fn(frame_dict)
         self.on_pcap   = None   # fn(data: bytes, chunk_idx: int)
@@ -217,26 +225,45 @@ class Protocol:
 
         if t == TYPE_RESP:
             pid = frame["id"]
-            with self._lock:
-                entry = self._pending.get(pid)
-            if entry:
-                entry["result"] = frame["json"]
-                entry["event"].set()
+            if pid == 0:
+                # Raw HTML chunk ACK — goes to its own queue, not the shared one
+                try:
+                    self._html_resp_q.put_nowait(frame["json"])
+                except queue.Full:
+                    pass
+            else:
+                with self._lock:
+                    entry = self._pending.get(pid)
+                if entry:
+                    entry["result"] = frame["json"]
+                    entry["event"].set()
 
         elif t == TYPE_EVENT:
             try:
                 self._dispatch_q.put_nowait(("event", frame["json"]))
             except queue.Full:
-                pass   # drop events under extreme backpressure
+                pass
 
         elif t == TYPE_PCAP:
             idx = frame["id"]
-            # ACK immediately in the read loop for minimum round-trip time
             self.send_ack(idx)
             try:
                 self._dispatch_q.put_nowait(("pcap", frame["payload"], idx))
             except queue.Full:
                 pass
+
+    def _wait_html_resp(self, expected_seq, timeout=3.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                resp = self._html_resp_q.get(timeout=remaining)
+            except queue.Empty:
+                return None
+            if resp and resp.get("seq") == expected_seq:
+                return resp
 
     def _callback_loop(self):
         while self._running:

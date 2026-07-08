@@ -6,13 +6,16 @@
 #define PROTO_MAGIC_0   0xAD
 #define PROTO_MAGIC_1   0xDE
 #define PROTO_HEADER_SZ 8       // 2 magic + 1 type + 1 id + 4 length
-#define PROTO_MAX_CHUNK 512
+#define PROTO_MAX_CHUNK 1024
+#define PROTO_RX_BUF_SIZE   (PROTO_MAX_CHUNK + PROTO_HEADER_SZ + 64)
 
 #define TYPE_CMD    0x01
 #define TYPE_RESP   0x02
 #define TYPE_EVENT  0x03
 #define TYPE_PCAP   0x04
 #define TYPE_ACK    0x05
+#define TYPE_HTML   0x06
+
 
 // ── Parsed frame ─────────────────────────────────────────────────────────────
 struct ProtoFrame {
@@ -26,6 +29,8 @@ struct ProtoFrame {
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 using CmdCallback   = void (*)(uint8_t id, JsonDocument& doc);
 using AckCallback   = void (*)(uint32_t chunk_index);
+using HtmlCallback = void (*)(const uint8_t* data, size_t len);
+
 
 // ── BridgeProtocol ────────────────────────────────────────────────────────────
 class BridgeProtocol {
@@ -44,6 +49,9 @@ public:
     void sendEvent(const char* type, JsonDocument& doc);
     void sendPcapChunk(uint8_t chunk_idx, const uint8_t* data, uint32_t len);
     void sendRaw(uint8_t type, uint8_t id, const uint8_t* payload, uint32_t len);
+    uint32_t oversizedFrameCount() const { return _oversizedFrames; }
+    void onHtml(HtmlCallback cb) { _onHtml = cb; }
+
 
 private:
     Stream&     _stream;
@@ -51,10 +59,13 @@ private:
     AckCallback _onAck = nullptr;
 
     // Parser state
-    uint8_t  _buf[PROTO_MAX_CHUNK + PROTO_HEADER_SZ];
+    uint8_t  _buf[PROTO_RX_BUF_SIZE];   // was [PROTO_MAX_CHUNK + PROTO_HEADER_SZ]
     uint32_t _bufLen  = 0;
 
     bool     _tryParse();
     void     _dispatch(ProtoFrame& f);
     void     _resync();
+    uint32_t _oversizedFrames = 0;
+    HtmlCallback _onHtml = nullptr;
+
 };

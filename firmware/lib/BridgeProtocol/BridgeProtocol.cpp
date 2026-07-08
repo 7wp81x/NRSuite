@@ -1,22 +1,27 @@
 #include "BridgeProtocol.h"
 
-// ── update() — call from loop() ───────────────────────────────────────────────
 void BridgeProtocol::update() {
-    while (_stream.available()) {
-        if (_bufLen >= sizeof(_buf)) {
-            // Buffer full without a valid frame — resync
-            _resync();
+    while (true) {
+        while (_stream.available()) {
+            if (_bufLen < sizeof(_buf)) {
+                _buf[_bufLen++] = _stream.read();
+            } else {
+                _resync();
+                if (_bufLen >= sizeof(_buf)) {
+                    memmove(_buf, _buf + 1, --_bufLen);
+                }
+            }
+            while (_tryParse());
         }
-        _buf[_bufLen++] = _stream.read();
-        while (_tryParse());  // keep parsing while there are complete frames
+
+        delay(1);
+        if (!_stream.available()) break;
     }
 }
 
-// ── _tryParse — extract one frame from _buf if possible ──────────────────────
 bool BridgeProtocol::_tryParse() {
     if (_bufLen < PROTO_HEADER_SZ) return false;
 
-    // Check magic — resync if missing
     if (_buf[0] != PROTO_MAGIC_0 || _buf[1] != PROTO_MAGIC_1) {
         _resync();
         return false;
@@ -28,13 +33,21 @@ bool BridgeProtocol::_tryParse() {
     memcpy(&len, _buf + 4, 4);  // little-endian
 
     if (len > PROTO_MAX_CHUNK) {
-        // Suspiciously large — probably a corrupt header, resync
+        _oversizedFrames++;
         _resync();
         return false;
     }
 
     uint32_t total = PROTO_HEADER_SZ + len;
-    if (_bufLen < total) return false;  // wait for more bytes
+    if (total > sizeof(_buf)) {
+        _oversizedFrames++;
+        _resync();
+        return false;
+    }
+
+    if (_bufLen < total) {
+        return false;
+    }
 
     ProtoFrame f;
     f.type    = ptype;
@@ -51,10 +64,8 @@ bool BridgeProtocol::_tryParse() {
     return true;
 }
 
-// ── _resync — scan forward for next magic bytes ───────────────────────────────
 void BridgeProtocol::_resync() {
     if (_bufLen < 2) {
-        // Nothing to scan — avoid unsigned underflow on _bufLen - 1 below.
         _bufLen = 0;
         return;
     }
@@ -71,17 +82,29 @@ void BridgeProtocol::_resync() {
 // ── _dispatch — route frame to correct callback ───────────────────────────────
 void BridgeProtocol::_dispatch(ProtoFrame& f) {
     if (f.type == TYPE_CMD && _onCmd) {
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, f.payload, f.length);
+        JsonDocument* doc = new JsonDocument();
+        if (!doc) return;  // OOM
+        
+        DeserializationError err = deserializeJson(*doc, f.payload, f.length);
         if (!err) {
-            _onCmd(f.id, doc);
+            _onCmd(f.id, *doc);
         }
+        delete doc;
     }
     else if (f.type == TYPE_ACK && _onAck) {
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, f.payload, f.length);
-        if (!err && doc["chunk"].is<uint32_t>()) {
-            _onAck(doc["chunk"].as<uint32_t>());
+        JsonDocument* doc = new JsonDocument();
+        if (!doc) return;
+
+        DeserializationError err = deserializeJson(*doc, f.payload, f.length);
+        if (!err && (*doc)["chunk"].is<uint32_t>()) {
+            _onAck((*doc)["chunk"].as<uint32_t>());
+        }
+        delete doc;
+    }
+
+    else if (f.type == TYPE_HTML) {
+        if (_onHtml) {
+            _onHtml(f.payload, f.length);
         }
     }
 }

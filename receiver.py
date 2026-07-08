@@ -79,7 +79,6 @@ class ReceiverThread(threading.Thread):
 
 
     def run(self):
-        self.log(f"[receiver] started EP=0x{self.ep_in_addr:02X}")
         while not self._stop_event.is_set():
             try:
                 chunk = bytes(self.device.read(self.ep_in_addr, _READ_SIZE,
@@ -109,14 +108,13 @@ class ReceiverThread(threading.Thread):
                 if code in (None, 32, 75):
                     self._error_count += 1
                     if self._error_count <= 5:
-                        self.log(f"[receiver] USB error (recoverable, #{self._error_count}): {e}")
+                        self.log(f"USB error (recoverable, #{self._error_count}): {e}")
                     time.sleep(min(0.05 * self._error_count, 0.3))
                     continue
                 else:
-                    self.log(f"[receiver] fatal USB error: {e}")
+                    self.log(f"fatal USB error: {e}")
                     break
 
-        self.log("[receiver] stopped")
 
     def _flush_lines(self):
         """Split accumulated buffer into newline-delimited text lines."""
