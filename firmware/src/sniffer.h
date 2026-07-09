@@ -4,50 +4,39 @@
 #include <esp_wifi.h>
 #include "BridgeProtocol.h"
 
-// ── Tunables ───────────────────────────────────────────────────────────────
-// Keep these conservative — ESP32-C3 has limited SRAM and the JSON/USB
-// stack already eats into it. Check STATUS's "heap" field if you bump these.
-#define SNIFF_SNAPLEN      400   // max 802.11 frame bytes kept per packet
-#define SNIFF_QUEUE_DEPTH  24    // captured-but-unsent frames buffered
-#define SNIFF_MAX_INFLIGHT 4     // un-ACKed PCAP frames allowed on the wire
+// Tunables
+#define SNIFF_SNAPLEN      400
+#define SNIFF_QUEUE_DEPTH  24
+#define SNIFF_MAX_INFLIGHT 4
 
-// ── Captured frame (fixed size — safe to pass through a FreeRTOS queue) ────
 struct CapturedFrame {
-    uint16_t cap_len;            // bytes actually captured (<= SNIFF_SNAPLEN)
-    uint16_t orig_len;           // true on-air frame length, for stats
+    uint16_t cap_len;
+    uint16_t orig_len;
     uint8_t  channel;
     int8_t   rssi;
     uint8_t  data[SNIFF_SNAPLEN];
 };
 
 struct SniffStats {
-    uint32_t captured = 0;       // frames seen by the promiscuous callback
-    uint32_t sent      = 0;      // frames forwarded to Termux
-    uint32_t dropped   = 0;      // frames dropped (queue full / backpressure)
+    uint32_t captured = 0;
+    uint32_t sent     = 0;
+    uint32_t dropped  = 0;
 };
 
 class Sniffer {
 public:
     void begin(BridgeProtocol& proto);
+    static Sniffer* instance() { return _instance; }
 
-    // Commands (called from BridgeProtocol CMD handlers)
-    bool startFixed(uint8_t channel);          // channel 1-13
-    bool startHop(uint16_t intervalMs);        // cycles 1-13
+    bool startFixed(uint8_t channel);
+    bool startHop(uint16_t intervalMs);
     void stop();
-    bool setChannel(uint8_t channel);          // valid while active, any mode
+    bool setChannel(uint8_t channel);
 
-    // Passive handshake capture: when enabled, only EAPOL frames are queued
-    // (optionally restricted to one BSSID). This is purely a receive-side
-    // filter — it does not transmit anything. Call before start*().
-    // To actually see a handshake you still need the client to (re)associate
-    // naturally — e.g. toggle WiFi off/on on your own test device.
     void setEapolFilter(bool enable, const uint8_t bssid[6] = nullptr);
 
-    // Call every loop() iteration — never blocks
     void processQueue();
     void handleHop();
-
-    // Wire this to BridgeProtocol::onAck
     void onAck(uint32_t chunkIndex);
 
     bool       active()  const { return _active; }
@@ -69,16 +58,18 @@ private:
     uint8_t      _chunkCtr = 0;
 
     bool    _eapolOnly      = false;
+    bool    _beaconCaptured = false;
     bool    _hasTargetBssid = false;
     uint8_t _targetBssid[6] = {0};
-
+    
     SniffStats _stats;
 
-    // The IDF promiscuous callback is a free function — route via singleton.
     static Sniffer* _instance;
     static void promiscuousCb(void* buf, wifi_promiscuous_pkt_type_t type);
     void   handlePacket(wifi_promiscuous_pkt_t* pkt);
     size_t buildRadiotap(uint8_t* out, uint8_t channel, int8_t rssi);
     bool   isEapolFrame(const wifi_promiscuous_pkt_t* pkt) const;
+    bool   isBeaconFrame(const wifi_promiscuous_pkt_t* pkt) const;
+    bool   isAssociationRequest(const wifi_promiscuous_pkt_t* pkt) const;
     bool   matchesTargetBssid(const wifi_promiscuous_pkt_t* pkt) const;
 };
