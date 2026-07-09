@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NRcap32 — Wi-Fi capture for Termux</title>
-<meta name="description" content="Turn a $3–5 ESP32 into a Wi-Fi capture adapter for Termux — no root required. Monitor mode, packet capture, and EAPOL handshake capture on a stock Android phone.">
-<meta property="og:title" content="NRcap32 — Wi-Fi capture for Termux, no root required">
-<meta property="og:description" content="Turn a $3–5 ESP32 into a Wi-Fi capture adapter for Termux. Monitor mode, pcap output, and EAPOL handshake capture — no root, no custom ROM.">
+<title>NRSuite — Wireless research toolkit for Termux</title>
+<meta name="description" content="Turn a $3–5 ESP32 into a wireless research toolkit for Termux — no root required. Wi-Fi monitor mode, packet capture, and injection today, with BLE and IR modules coming next.">
+<meta property="og:title" content="NRSuite — Wireless research toolkit for Termux, no root required">
+<meta property="og:description" content="Turn a $3–5 ESP32 into a wireless research toolkit for Termux. Full Wi-Fi monitor mode and injection today — no root, no custom ROM — with more radio modules on the way.">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0a0a">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%230a0a0a'/%3E%3Ctext x='50' y='68' font-family='monospace' font-size='54' font-weight='700' fill='%2300b4a6' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
@@ -676,12 +676,47 @@
     height: 18px;
     border: 1px solid var(--muted);
     border-radius: 3px;
+    position: relative;
+  }
+
+  .roadmap-check.done {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .roadmap-check.done::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 3px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--bg);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
   }
 
   .roadmap-text {
     font-size: 0.9rem;
     color: var(--text);
   }
+
+  .roadmap-item.done .roadmap-text { color: var(--mid); }
+
+  .roadmap-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-left: auto;
+    flex-shrink: 0;
+    padding: 0.15rem 0.5rem;
+    border-radius: 2px;
+  }
+
+  .roadmap-tag.shipped { color: var(--accent); background: rgba(0,180,166,0.12); }
+  .roadmap-tag.next { color: #c9a80c; background: rgba(241,196,15,0.1); }
 
   /* RESPONSIVE */
   @media (max-width: 900px) {
@@ -710,14 +745,14 @@
 
 <!-- NAV -->
 <nav>
-  <div class="nav-logo">NR<span>cap</span>32</div>
+  <div class="nav-logo">NR<span>Suite</span></div>
   <ul class="nav-links">
     <li><a href="#features">Features</a></li>
     <li><a href="#install">Install</a></li>
     <li><a href="#hardware">Hardware</a></li>
     <li><a href="#protocol">Protocol</a></li>
     <li><a href="#compare">Compare</a></li>
-    <li><a href="https://github.com/0xhim4ri-81x/NRcap32" class="nav-cta">GitHub</a></li>
+    <li><a href="https://github.com/7wp81x/NRSuite" class="nav-cta">GitHub</a></li>
   </ul>
 </nav>
 
@@ -726,17 +761,17 @@
   <div class="hero-text">
     <p class="hero-eyebrow">ESP32 + Termux + USB OTG</p>
     <h1 class="hero-title">
-      Wi-Fi capture<br>
+      A wireless toolkit<br>
       <strong>without root.</strong>
     </h1>
     <p class="hero-sub">
-      NRcap32 turns a <b>$3 ESP32</b> into a monitor-mode adapter for Termux.
-      No rooted phone. No custom kernel. No expensive hardware.
-      Just a cheap chip, an OTG cable, and a stock Android phone.
+      NRSuite turns a <b>$3 ESP32</b> into a wireless research toolkit for Termux.
+      Full Wi-Fi monitor mode and injection is implemented today, with BLE and
+      IR modules coming next — no rooted phone, no custom kernel, no expensive hardware.
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get started</a>
-      <a href="https://github.com/0xhim4ri-81x/NRcap32" class="btn btn-secondary">View on GitHub</a>
+      <a href="https://github.com/7wp81x/NRSuite" class="btn btn-secondary">View on GitHub</a>
     </div>
   </div>
 
@@ -745,7 +780,7 @@
       <div class="dot dot-r"></div>
       <div class="dot dot-y"></div>
       <div class="dot dot-g"></div>
-      <span class="term-label">Termux — nrcap32</span>
+      <span class="term-label">Termux — nrsuite</span>
     </div>
     <div class="term-body" id="term-body"></div>
   </div>
@@ -776,8 +811,8 @@
 <!-- FEATURES -->
 <section class="section" id="features">
   <p class="section-label">Capabilities</p>
-  <h2 class="section-title">What it does</h2>
-  <p class="section-body">The ESP32 handles everything at the radio layer. Termux talks to it over USB CDC — no root, no kernel modules, no custom ROM required.</p>
+  <h2 class="section-title">What it does today</h2>
+  <p class="section-body">The ESP32 handles everything at the radio layer, and the firmware and bridge protocol are modular — new radio backends register their own commands without touching the transport layer. Wi-Fi is the first module, fully implemented and tested. Termux talks to it over USB CDC — no root, no kernel modules, no custom ROM required.</p>
 
   <div class="features-grid">
     <div class="feature">
@@ -807,8 +842,8 @@
     </div>
     <div class="feature">
       <span class="feature-tag">protocol</span>
-      <div class="feature-title">Binary bridge protocol</div>
-      <div class="feature-desc">Compact framed protocol with sliding-window flow control over USB CDC bulk transfer. Not serial ASCII.</div>
+      <div class="feature-title">Modular bridge protocol</div>
+      <div class="feature-desc">Compact framed protocol with sliding-window flow control over USB CDC bulk transfer — built as shared transport for every module, not just Wi-Fi.</div>
     </div>
   </div>
 </section>
@@ -821,7 +856,7 @@
     <div>
       <p class="section-label">Setup</p>
       <h2 class="section-title">Up and running in minutes</h2>
-      <p class="section-body">Works on any stock Android phone with a USB OTG port. No root. No custom ROM. No kernel modules.</p>
+      <p class="section-body">Works on any stock Android phone with a USB OTG port. No root. No custom ROM. No kernel modules — the same setup carries forward as new radio modules ship.</p>
 
       <div class="install-steps">
         <div class="step">
@@ -842,7 +877,7 @@
           <span class="step-num">03</span>
           <div>
             <div class="step-title">Connect via OTG and run</div>
-            <div class="step-desc">Plug the ESP32 into your phone with a data-capable OTG cable. Grant the USB permission dialog on first use. Run <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.8em">./nrcap32 scan</code>.</div>
+            <div class="step-desc">Plug the ESP32 into your phone with a data-capable OTG cable. Grant the USB permission dialog on first use. Run <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.8em">./nrsuite scan</code>.</div>
           </div>
         </div>
       </div>
@@ -850,8 +885,8 @@
 
     <div>
       <div class="code-block"><span class="cm"># Clone the repo</span>
-<span class="kw">git clone</span> https://github.com/0xhim4ri-81x/nrcap32
-<span class="kw">cd</span> nrcap32
+<span class="kw">git clone</span> https://github.com/7wp81x/nrsuite
+<span class="kw">cd</span> nrsuite
 
 <span class="cm"># Install Termux deps</span>
 <span class="kw">pkg</span> install python termux-api libusb
@@ -863,12 +898,12 @@
 <span class="kw">cd</span> ..
 
 <span class="cm"># Make executable and scan</span>
-<span class="kw">chmod</span> +x nrcap32
-./nrcap32 scan</div>
+<span class="kw">chmod</span> +x nrsuite
+./nrsuite scan</div>
 
       <p style="margin-top:1rem;font-size:0.78rem;color:var(--muted)">
         Or use the automated installer:<br>
-        <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.85em">curl -sSL https://raw.githubusercontent.com/0xhim4ri-81x/nrcap32/main/install.sh | bash</code>
+        <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.85em">curl -sSL https://raw.githubusercontent.com/7wp81x/nrsuite/main/install.sh | bash</code>
       </p>
     </div>
   </div>
@@ -889,10 +924,10 @@
       </div>
     </div>
     <div class="hw-card">
-      <span class="hw-status untested">Untested</span>
+      <span class="hw-status tested">Tested</span>
       <div>
         <div class="hw-name">ESP32-S3</div>
-        <div class="hw-desc">More RAM and flash, native USB CDC, dual-core Xtensa. Should work with minor platformio.ini adjustments.</div>
+        <div class="hw-desc">More RAM and flash, native USB CDC, dual-core Xtensa. Confirmed working — a solid pick for future modules that need extra headroom.</div>
       </div>
     </div>
     <div class="hw-card">
@@ -972,16 +1007,13 @@
 <section class="section" id="roadmap">
   <p class="section-label">Roadmap</p>
   <h2 class="section-title">What's next</h2>
-  <p class="section-body">NRcap32's modular CMD dispatcher is built to grow. These are the modules planned for upcoming releases.</p>
+  <p class="section-body">Wi-Fi is the first module, and AP mode has since shipped. NRSuite's CMD dispatcher and bridge protocol are built to grow into a full wireless toolkit — BLE is next up, followed by IR.</p>
 
   <div class="roadmap-list">
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">AP mode — captive portal support</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Beacon broadcasting — beacon spam, custom and hidden SSIDs</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">WPS support — WPS Pixie Dust attack</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">WPA3 PMKID capture — passive, no deauth required</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Bluetooth — BLE scanning, advertising, device discovery, BLE spam</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">HID emulation — BLE BadUSB, keyboard injection</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Multi-ESP32 — USB hub + multiple devices for simultaneous multi-channel capture</span></div>
+    <div class="roadmap-item done"><span class="roadmap-check done"></span><span class="roadmap-text">AP Mode — captive portal support</span><span class="roadmap-tag shipped">Shipped</span></div>
+    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Beacon Broadcasting — beacon spam, custom SSIDs, hidden SSIDs</span></div>
+    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Bluetooth — BLE scanning, advertising, device discovery, BLE spam</span><span class="roadmap-tag next">Next</span></div>
+    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">HID Emulation — BLE BadUSB, keyboard injection</span></div>
     <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Hardware expansion — IR, NRF24, CC1101 modules</span></div>
   </div>
 </section>
@@ -992,14 +1024,14 @@
 <section class="section" id="compare">
   <p class="section-label">Comparison</p>
   <h2 class="section-title">How it stacks up</h2>
-  <p class="section-body">The no-root path is the unique capability. It turns any stock Android phone into a Wi-Fi capture platform with zero setup beyond Termux and a $5 chip.</p>
+  <p class="section-body">The no-root path is the unique capability. It turns any stock Android phone into a wireless research platform with zero setup beyond Termux and a $5 chip — one that keeps growing as new radio modules ship.</p>
 
   <table class="compare-table">
     <thead>
       <tr>
         <th></th>
-        <th style="color:var(--accent)">NRcap32 (no root)</th>
-        <th>NRcap32 (root)</th>
+        <th style="color:var(--accent)">NRSuite (no root)</th>
+        <th>NRSuite (root)</th>
         <th>NetHunter + ext. adapter</th>
       </tr>
     </thead>
@@ -1060,12 +1092,12 @@
 
 <!-- FOOTER -->
 <footer>
-  <div class="footer-logo">NR<span>cap</span>32</div>
+  <div class="footer-logo">NR<span>Suite</span></div>
   <ul class="footer-links">
-    <li><a href="https://github.com/0xhim4ri-81x/NRcap32">GitHub</a></li>
-    <li><a href="https://github.com/0xhim4ri-81x/NRcap32/releases">Releases</a></li>
-    <li><a href="https://github.com/0xhim4ri-81x/NRcap32/blob/main/LICENSE">MIT License</a></li>
-    <li><a href="https://github.com/0xhim4ri-81x/NRcap32/issues">Issues</a></li>
+    <li><a href="https://github.com/7wp81x/NRSuite">GitHub</a></li>
+    <li><a href="https://github.com/7wp81x/NRSuite/releases">Releases</a></li>
+    <li><a href="https://github.com/7wp81x/NRSuite/blob/main/LICENSE">MIT License</a></li>
+    <li><a href="https://github.com/7wp81x/NRSuite/issues">Issues</a></li>
   </ul>
   <p class="footer-legal">
     For authorized security research, penetration testing on infrastructure you own, and educational use only.
@@ -1077,7 +1109,7 @@
 <script>
 // Terminal animation
 const lines = [
-  { type: 'prompt', text: './nrcap32 scan' },
+  { type: 'prompt', text: './nrsuite scan' },
   { type: 'muted',  text: 'Found device: /dev/bus/usb/002/008' },
   { type: 'muted',  text: 'Requesting USB permission (tap OK)...' },
   { type: 'accent', text: '' },
