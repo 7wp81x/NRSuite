@@ -59,11 +59,11 @@ def log(msg: str, color=None, level: str = "info"):
 def banner():
     logo = """
 \033[1;92m _____ _____ \033[1;96m_____     _ _       
-\033[1;92m|   | | __  |   __|_ _|_| |_ ___ 
+\033[1;92m|   | | __  |\033[1;96m   __|_ _|_| |_ ___ 
 \033[1;92m| | | |    -|\033[1;96m__   | | | |  _| -_|
 \033[1;92m|_|___|__|__|\033[1;96m_____|___|_|_| |___| v1.2
 
-\033[1;92m[+]\033[0m Github \033[4;92m@7wp81x\NRSuite\033[0m
+\033[1;92m[+]\033[0m Github \033[4;92m@7wp81x/NRSuite\033[0m
 """
     print(logo)
 
@@ -221,7 +221,7 @@ def _setup_bridge(fd=None):
         from usb_device import wrap_fd
         device = wrap_fd(fd)
 
-     log("Starting bridge, Please wait...", C.GREEN, level="ok")
+    log("Starting bridge, Please wait...", C.GREEN, level="ok")
     ep_in, ep_out, intf = get_cdc_endpoints(device)
     claim_device(device, intf, fd_wrapped=(fd is not None))
     init_cp2102_bridge(device)
@@ -620,7 +620,7 @@ def main():
     portal_p.add_argument("--file", help="HTML file to upload (for start or html action)")
     
     args = parser.parse_args()
-
+    banner()
     from usb_device import detect_backend
 
     try:
@@ -630,7 +630,6 @@ def main():
         sys.exit(1)
 
     fd_str = os.environ.get("TERMUX_USB_FD")
-    banner()
     if backend == "root":
         if args.command == "scan":
             do_scan()
