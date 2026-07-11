@@ -2,7 +2,7 @@
 
 > Turn a $3–5 ESP32 into a wireless research toolkit for Termux — **no root required.**
 
-NRSuite bypasses Android's locked-down radio APIs by offloading the radio layer to an ESP32 over USB OTG. Today that means full Wi-Fi monitor mode, packet capture, and frame injection on a stock, unrooted Android phone. The firmware and bridge protocol are built to grow — Bluetooth LE, IR, NRF24, and CC1101 modules are on the roadmap — so the same phone-plus-ESP32 setup becomes a general-purpose wireless toolkit, not a single-purpose tool.
+NRSuite bypasses Android's locked-down radio APIs by offloading the radio layer to an ESP32 over USB OTG, turning a stock, unrooted Android phone into a wireless research toolkit. See [Features](#features) for exactly what's implemented today. The firmware and bridge protocol are modular by design — new radio backends and capabilities register their own CMDs without touching the transport layer, so the toolkit keeps growing without becoming a single-purpose tool.
 
 <p align="center">
   <img src="docs/images/architecture_bw.jpg" width="700" alt="Architecture diagram">
@@ -23,7 +23,7 @@ Android has never exposed monitor mode, raw packet injection, or low-level radio
 NRSuite sidesteps the entire problem:
 
 - The **ESP32** handles everything radio-level — promiscuous capture, channel hopping, raw frame injection
-- **Termux** talks to it over USB CDC using `termux-usb` + libusb — no root, no kernel modules, no custom ROM
+- **Termux** talks to it over USB (native CDC or external UART bridge, depending on board) using `termux-usb` + libusb — no root, no kernel modules, no custom ROM
 - The **Python bridge** speaks a compact framed binary protocol with flow control, not serial ASCII
 - The **firmware and protocol are modular** — new radio backends register their own CMDs without touching the transport layer
 
@@ -31,20 +31,23 @@ Total hardware cost: under $5. Works on any Android phone with USB-C or micro-US
 
 ---
 
-## What works today
+## Features
 
-Wi-Fi is the first fully implemented module. Everything below is tested and working:
+Checklist of implemented functionality — update this when adding/removing features so it stays accurate at a glance.
 
-| | |
-|---|---|
-| **Wi-Fi scan** | Active scan with SSID, BSSID, channel, RSSI, and security type |
-| **Packet capture** | Fixed channel or channel-hopping promiscuous capture, saved as `.pcap` with radiotap headers (Wireshark-compatible) |
-| **EAPOL capture** | Passive handshake capture, optionally filtered by BSSID |
-| **Deauth + capture** | Send deauth frames to trigger a handshake, capture EAPOL simultaneously |
-| **Live streaming** | Pipe pcap output to termshark via named FIFO for real-time analysis |
-| **Heartbeat** | ESP32 sends uptime and free heap every 5 seconds for health monitoring |
+- [x] **WiFi scan** — active scan with SSID, BSSID, channel, RSSI, security type
+- [x] **Packet sniffing** — fixed channel or channel-hopping promiscuous capture, `.pcap` output, live stream via FIFO
+- [x] **EAPOL capture** — passive handshake capture, optional BSSID/client filtering
+- [x] **Deauthentication** — standalone deauth, or combined with sniffing to trigger + capture a handshake
+- [x] **Captive portal / AP mode** — start/stop/status, custom SSID + channel, custom HTML upload, optional auto EAPOL capture against a target BSSID
+- [x] **BLE HID (BadBLE)** — advertise as a BLE keyboard, run a DuckyScript payload against a paired host
+- [x] **BLE HID (realtime keyboard)** — live keystroke passthrough from your terminal to a paired BLE host
+- [x] **Heartbeat** — uptime + free heap reported every 5 seconds for health monitoring
+- [ ] Beacon broadcasting (beacon spam, custom/hidden SSIDs)
+- [ ] BLE scanning, advertising, device discovery, BLE spam
+- [ ] Hardware expansion — IR, NRF24, CC1101 modules
 
-See [Roadmap](#roadmap) for what's planned beyond Wi-Fi — BLE, HID emulation, AP mode, and additional radio hardware.
+> BLE HID requires a chip with a Bluetooth radio (C3, S3, or classic ESP32). ESP32-S2 is Wi-Fi only and does not support this feature — see [Hardware](#hardware).
 
 ---
 
@@ -52,13 +55,17 @@ See [Roadmap](#roadmap) for what's planned beyond Wi-Fi — BLE, HID emulation, 
 
 | Component | Status | Notes |
 |-----------|:------:|-------|
-| **ESP32-C3 SuperMini** | ✅ Tested | Primary target — ~$3, native USB CDC built-in |
-| **ESP32-S3** (any board) | ✅ Tested | More RAM/flash, native USB CDC, dual-core |
-| ESP32-S2 (any board) | ⚠️ Untested | Single-core, native USB CDC, lower cost |
+| **ESP32-C3** | ✅ Tested | Native USB CDC, ~$3 — covers both SuperMini and regular C3 devkit boards, WiFi + BLE HID support |
+| **ESP32-S3** (any board) | ✅ Tested | More RAM/flash, native USB CDC, dual-core, WiFi + BLE HID support |
+| ESP32-S2 (any board) | ⚠️ Untested | Native USB (OTG), single-core, WiFi only — **no BLE radio**, so BadBLE/keyboard is unavailable on this chip regardless of testing status |
+| **Classic ESP32 devkit (WROOM-32)** | ✅ Tested | Requires external USB-UART bridge on the board — no native USB CDC. CP2102, CH340, CH9102, and FTDI FT232 are explicitly supported with correct reset/init handling; other bridge chips will likely still work via generic CDC/bulk-endpoint fallback, but without guaranteed reset timing. WiFi + BLE HID support |
 | USB OTG cable / adapter | — | USB-C OTG or micro-USB OTG depending on your phone |
 | Android phone | — | Any version with USB host support — no root required |
 
-All supported boards use **native USB CDC** — no external USB-UART bridge chip (CP2102/CH340) needed. They show up as `303A:xxxx` on Android and communicate directly over USB.
+NRSuite supports **both native USB CDC and external USB-UART** boards:
+
+- **Native USB** boards (C3, S3, S2) show up as `303A:xxxx` and communicate directly over USB — no bridge chip needed. C3 uses USB-Serial-JTAG; S2 (and optionally S3) uses USB-OTG — see [build flags](#key-build-flags) for the distinction.
+- **UART-based** boards (classic ESP32 devkits) use an onboard USB-to-serial chip and show up under that chip's own VID:PID. CP2102, CH340, CH9102, and FTDI FT232 are explicitly recognized (with correct reset/DTR handling); other bridge chips generally still work via a generic bulk-endpoint fallback. The bridge protocol works identically across all transports — `nrsuite` autodetects the connected device type.
 
 The Wi-Fi module uses the ESP32's built-in 2.4 GHz radio — no external antenna needed. Future modules (NRF24, CC1101, IR) will use external add-on hardware — see [Roadmap](#roadmap).
 
@@ -73,7 +80,7 @@ pkg update && pkg install python termux-api libusb
 pip install pyusb
 ```
 
-Also install the **Termux:API** companion app from [F-Droid](https://f-droid.org) — *not* the Play Store version, which is outdated.
+Also install the **Termux:API** companion app from [F-Droid](https://f-droid.org/packages/com.termux.api/) — *not* the Play Store version, which is outdated.
 
 ### 2. Clone the repo
 
@@ -86,7 +93,7 @@ cd NRSuite
 
 ```bash
 cd firmware/
-pio run -e esp32-c3-supermini --target upload   # or esp32-s3 / esp32-s2
+pio run -e esp32-c3 --target upload   # or esp32-s3 / esp32-s2 / esp32-devkit
 ```
 
 Confirm it booted correctly — `pio device monitor --baud 115200` should print `ESP32_READY`. See [Firmware](#firmware) below for pre-built binaries and `esptool.py` instructions.
@@ -109,7 +116,7 @@ curl -sSL https://raw.githubusercontent.com/7wp81x/NRSuite/main/install.sh | bas
 
 ## Usage
 
-All commands follow the same pattern — the script detects the USB device, requests permission via `termux-usb`, and re-invokes itself with the granted file descriptor. Wi-Fi is the only module implemented so far; commands below are all `nrsuite <module-style subcommands>` under one CLI, so future modules (`ble`, `ir`, ...) slot in the same way.
+All commands follow the same pattern — the script detects the USB device, requests permission via `termux-usb`, and re-invokes itself with the granted file descriptor. Wi-Fi and BLE HID are implemented so far; commands below are all `nrsuite <module-style subcommands>` under one CLI, so future modules (`ir`, ...) slot in the same way.
 
 ### Scan nearby networks
 
@@ -140,9 +147,20 @@ OfficeWifi                     B0:4E:26:CC:2E:F8    3    -66  WPA2-PSK
 ./nrsuite sniff --channel 6
 ./nrsuite sniff --channel 6 -o capture.pcap
 
-# Channel hopping (hops 1–13 every 300ms, stop with Ctrl+C)
+# Channel hopping (stop with Ctrl+C)
 ./nrsuite sniff --hop --interval 300
+
+# EAPOL-only, filtered to a target BSSID/client
+./nrsuite sniff --channel 6 --eapol-only --bssid C8:3A:35:CA:75:48 --client AA:BB:CC:DD:EE:FF
+
+# Trigger deauth while sniffing, capped by count/duration
+./nrsuite sniff --channel 6 --deauth --count 15 --duration 30
+
+# Stream to a FIFO instead of writing a file
+./nrsuite sniff --channel 6 --stream -o /tmp/live.pcap
 ```
+
+Run `./nrsuite sniff --help` for the full flag list — options like `--count`, `--duration`, `--client`, and `--stream` combine with the modes above.
 
 ### Open in Wireshark / termshark
 
@@ -162,19 +180,53 @@ termshark -i /tmp/live.pcap &
 ./nrsuite sniff --channel 6 --eapol-only --bssid C8:3A:35:CA:75:48
 ```
 
-### Deauth + handshake capture
+### Deauth
 
 ```bash
 ./nrsuite deauth \
     --bssid C8:3A:35:CA:75:48 \
     --channel 11 \
+    --client FF:FF:FF:FF:FF:FF \ # Specific client or All client (remove)
     --count 15 \
-    --capture-secs 30
+    --interval 100
 ```
 
-Sends 15 deauth frames to disconnect clients, then captures EAPOL frames for 30 seconds. The resulting pcap can be used with Hashcat or Aircrack-ng for offline WPA2 key testing.
+Sends 15 deauth frames to disconnect clients on the target BSSID. To capture the resulting EAPOL handshake at the same time, use `sniff --deauth` (see above) instead of standalone `deauth` — that combined mode is what produces a pcap usable with Hashcat or Aircrack-ng for offline WPA2 key testing.
 
 > ⚠️ Only use this on your own network or with explicit written permission from the network owner.
+
+### Captive portal / AP mode
+
+```bash
+./nrsuite portal start --ssid "Free WiFi" --channel 6
+./nrsuite portal status
+./nrsuite portal stop
+
+# Serve a custom HTML page
+./nrsuite portal start --ssid "Free WiFi" --file login.html
+
+# Auto-capture EAPOL from a target BSSID while the portal is up
+./nrsuite portal start --ssid "Free WiFi" --bssid C8:3A:35:CA:75:48
+```
+
+> ⚠️ Only deploy a captive portal against networks/devices you own or have explicit written permission to test.
+
+### BLE HID (BadBLE / keyboard)
+
+> Requires a board with a Bluetooth radio — C3, S3, or classic ESP32 devkit. Not available on ESP32-S2 (WiFi-only silicon).
+
+```bash
+# Run a DuckyScript payload over BLE once a host pairs
+./nrsuite ble badble --advertise "Keyboard" --payload payload.txt
+
+# Keep advertising after the payload finishes, so you can re-trigger it
+./nrsuite ble badble --advertise "Keyboard" --payload payload.txt --keep-alive
+
+# Realtime keystroke passthrough — types whatever you type in this terminal
+./nrsuite ble keyboard --advertise "Keyboard"
+```
+
+> ⚠️ Only use BLE HID injection on devices you own or have explicit written permission to test.
 
 ---
 
@@ -250,7 +302,7 @@ Detection is fully automatic — no `--root` flag or manual configuration needed
 | Packet injection | ✓ | ✓ | ✓ |
 | USB permission dialog | First use only | ✗ | ✗ |
 | Live Wireshark (FIFO) | ✓ | ✓ | ✓ |
-| Beyond Wi-Fi (BLE / IR / RF) | Planned | Planned | ✗ |
+| Beyond Wi-Fi (BLE HID / IR / RF) | BLE HID shipped, IR/RF planned | BLE HID shipped, IR/RF planned | ✗ |
 
 ---
 
@@ -258,23 +310,50 @@ Detection is fully automatic — no `--root` flag or manual configuration needed
 
 ### Supported boards
 
-| Board | `platformio.ini` env | VID:PID | Status |
-|-------|---------------------|:-------:|:------:|
-| ESP32-C3 SuperMini | `esp32-c3-supermini` | `303A:1001` | ✅ Tested |
-| ESP32-S3 | `esp32-s3` | `303A:1001` | ✅ Tested |
-| ESP32-S2 | `esp32-s2` | `303A:0002` | ⚠️ Untested |
+| Board | `platformio.ini` env | Transport | VID:PID | Status |
+|-------|---------------------|-----------|:-------:|:------:|
+| ESP32-C3 | `esp32-c3` | Native USB CDC | `303A:1001` | ✅ Tested |
+| ESP32-S3 | `esp32-s3` | Native USB CDC | `303A:1001` | ✅ Tested |
+| ESP32-S2 | `esp32-s2` | Native USB (OTG) | `303A:0002` | ⚠️ Untested |
+| Classic ESP32 devkit (WROOM-32) | `esp32-devkit` | External USB-UART (CP2102/CH340) | chip-dependent | ✅ Tested |
 
 ### Key build flags
 
+USB-Serial-JTAG boards (C3, S3):
+
 ```ini
 build_flags =
-    -DARDUINO_USB_MODE=1           ; route Serial to native USB, not UART pins
+    -DARDUINO_USB_MODE=1           ; route Serial to the USB-Serial-JTAG peripheral
     -DARDUINO_USB_CDC_ON_BOOT=1    ; enable CDC before setup() runs  ← CRITICAL
     -DCONFIG_AUTOSTART_ARDUINO=1   ; loop() won't run without this
     -DCONFIG_ESP_WIFI_ENABLE_SNIFFER=1
 ```
 
-> **`ARDUINO_USB_CDC_ON_BOOT=1` is critical** — without it `Serial` maps to UART0 (TX/RX pins) and the bridge protocol gets no data over USB.
+USB-OTG boards (S2 — and S3 if you prefer OTG mode over JTAG-Serial):
+
+```ini
+build_flags =
+    -DARDUINO_USB_MODE=0           ; S2 has no USB-Serial-JTAG peripheral — must use OTG/TinyUSB
+    -DARDUINO_USB_CDC_ON_BOOT=1    ; enable CDC before setup() runs  ← CRITICAL
+    -DCONFIG_AUTOSTART_ARDUINO=1
+    -DCONFIG_ESP_WIFI_ENABLE_SNIFFER=1
+```
+
+> **`ARDUINO_USB_CDC_ON_BOOT=1` is critical on both native-USB variants** — without it `Serial` maps to UART0 (TX/RX pins) instead of native USB, and the bridge protocol gets no data over the OTG cable.
+
+> `ARDUINO_USB_MODE` controls *which* native USB peripheral `Serial` binds to — `1` = USB-Serial-JTAG (only present on C3/S3/C6/H2 silicon), `0` = USB-OTG/TinyUSB (present on S2/S3). Setting `MODE=1` on a chip without the JTAG-Serial peripheral (like S2) causes a build error (`'HWCDCSerial' was not declared in this scope`) since that class was never compiled in for that chip.
+
+External USB-UART boards (classic ESP32 devkit — no native USB peripheral at all):
+
+```ini
+build_flags =
+    -DARDUINO_USB_MODE=0            ; no native USB peripheral on classic ESP32
+    -DARDUINO_USB_CDC_ON_BOOT=0     ; Serial routes to UART0, out through the onboard CP2102/CH340
+    -DCONFIG_AUTOSTART_ARDUINO=1
+    -DCONFIG_ESP_WIFI_ENABLE_SNIFFER=1
+```
+
+The bridge protocol and every CMD work identically across all three configurations — the only difference is the physical/USB layer. `nrsuite` autodetects which one is connected.
 
 ### Flashing with PlatformIO
 
@@ -282,7 +361,7 @@ build_flags =
 cd firmware/
 
 # Flash + open serial monitor
-pio run -e esp32-c3-supermini --target upload && pio device monitor
+pio run -e esp32-c3 --target upload && pio device monitor
 
 # Confirm boot — should print: ESP32_READY
 # Heartbeat JSON appears every 5s: {"uptime":5000,"heap":250336,"type":"heartbeat"}
@@ -292,21 +371,52 @@ pio run -e esp32-c3-supermini --target upload && pio device monitor
 
 Pre-built `.bin` files are on the [Releases](https://github.com/7wp81x/nrsuite/releases) page.
 
+#### From a PC / laptop
+
 ```bash
 pip install esptool
 
-esptool.py --chip esp32c3 --port /dev/ttyUSB0 write_flash 0x0 nrsuite-c3.bin
-esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 nrsuite-s3.bin
-esptool.py --chip esp32s2 --port /dev/ttyUSB0 write_flash 0x0 nrsuite-s2.bin
+esptool.py --chip esp32c3 --port /dev/ttyUSB0 write_flash 0x0 nrsuite-esp32c3.bin
+esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 nrsuite-esp32s3.bin
+esptool.py --chip esp32s2 --port /dev/ttyUSB0 write_flash 0x0 nrsuite-esp32s2.bin
+esptool.py --chip esp32   --port /dev/ttyUSB0 write_flash 0x0 nrsuite-esp32-generic.bin
 ```
 
-Or use the [ESP32 Flash Download Tool](https://www.espressif.com/en/support/download/other-tools) on Windows.
+No Python environment handy? Espressif also runs a browser-based flasher that works over WebSerial — no install required, just Chrome/Edge and a USB cable:
+
+- [ESP Web Flasher](https://espressif.github.io/esptool-js/) — drag in the `.bin`, pick the offset (`0x0`), flash from the browser
+- [ESP32 Flash Download Tool](https://www.espressif.com/en/support/download/other-tools) — Windows GUI alternative
+
+#### From Android only (Termux, no root)
+
+`esptool.py` depends on pyserial, which expects a `/dev/ttyUSB*` node — Android doesn't expose one to unrooted apps, so plain `esptool.py` **will not work** in stock Termux. Use [NRFlasher](https://github.com/7wp81x/NRFlasher) instead — a Termux-native flasher that talks to the USB endpoints directly (same `termux-usb` fd-wrapping approach NRSuite itself uses), with no root and no pyserial required:
+
+```bash
+pkg update && pkg install python termux-api libusb
+pip install pyusb
+```
+
+Install the **Termux:API** companion app from [F-Droid](https://f-droid.org/packages/com.termux.api/) — *not* the Play Store version, which is outdated.
+
+```bash
+git clone https://github.com/7wp81x/Termux-ESP-Flasher
+cd Termux-ESP-Flasher
+chmod +x nrflash
+
+# Auto-detects the chip — omit --chip unless you want to force it
+./nrflash write --offset 0x0 nrsuite-esp32c3.bin
+
+# Flash + verify against the device afterward
+./nrflash write --offset 0x0 nrsuite-esp32c3.bin --verify
+```
+
+See the [NRFlasher README](https://github.com/7wp81x/NRFlasher) for multi-file writes (bootloader + partitions + app in one session), baud auto-negotiation, and troubleshooting.
 
 ---
 
 ## Bridge Protocol
 
-NRSuite uses a compact binary framing protocol over USB CDC bulk transfer. It's transport for the whole suite, not just Wi-Fi — future modules (BLE, IR, NRF24) reuse the same framing and add their own CMD types.
+NRSuite uses a compact binary framing protocol over the serial link (native USB CDC bulk transfer, or a UART bridge chip depending on board). It's transport for the whole suite, not just Wi-Fi — BLE HID already reuses it, and future modules (IR, NRF24, CC1101) will add their own CMD types on top of the same framing.
 
 ```
 [0xAD 0xDE][TYPE 1B][ID 1B][LENGTH 4B LE][PAYLOAD NB]
@@ -334,6 +444,20 @@ PCAP frames use sliding-window flow control: the ESP32 buffers up to `SNIFF_MAX_
 | `DEAUTH` | `{"bssid": "...", "channel": N, "count": N, ...}` | `{"ok": true, "sent": N}` |
 | `DEAUTH_CAPTURE` | same as DEAUTH | `{"ok": true, "sent": N, "sniffing": true}` |
 
+### Supported CMDs (BLE HID module)
+
+> Only available on boards with a Bluetooth radio (C3, S3, classic ESP32 devkit). Not compiled in on ESP32-S2 builds — that chip has no Bluetooth radio.
+
+| CMD | Args | Response |
+|-----|------|----------|
+| `BLE_BEGIN` | `{"name": "..."}` | `{"ok": true}` |
+| `BLE_STATUS` | — | `{"ok": true, "connected": bool, "advertising": bool, "peer": "..."}` |
+| `BLE_RUN_SCRIPT` | `{"script": "...DuckyScript text..."}` | `{"ok": true, "lines": N}` |
+| `BLE_KEY_DOWN` | `{"key": "..."}` | `{"ok": true}` |
+| `BLE_KEY_UP` | `{"key": "..."}` | `{"ok": true}` |
+| `BLE_STOP` | — | `{"ok": true}` |
+| `BLE_END` | — | `{"ok": true}` |
+
 ---
 
 ## Project Structure
@@ -341,10 +465,11 @@ PCAP frames use sliding-window flow control: the ESP32 buffers up to `SNIFF_MAX_
 ```
 nrsuite/
 ├── firmware/
-│   ├── platformio.ini            # multi-board build config (C3/S3/S2)
+│   ├── platformio.ini            # multi-board build config (C3/S3/S2/devkit)
 │   ├── src/
 │   │   ├── main.cpp              # Arduino entry point, CMD dispatcher
 │   │   ├── sniffer.cpp / .h      # Promiscuous capture, radiotap builder
+│   │   ├── ble_hid.cpp / .h      # BLE HID keyboard (BadBLE / realtime), C3/S3/devkit only
 │   │   └── override_sanity.cpp   # Bypass IDF raw frame sanity check
 │   └── lib/
 │       └── BridgeProtocol/       # Framed binary protocol (ESP32 side)
@@ -363,13 +488,7 @@ nrsuite/
 
 ## Roadmap
 
-Wi-Fi is the first module. These are next:
-
-- [X] AP Mode — Captive Portal support
-- [ ] Beacon Broadcasting — beacon spam, custom SSIDs, hidden SSIDs
-- [ ] Bluetooth — BLE scanning, advertising, device discovery, BLE spam
-- [ ] HID Emulation — BLE BadUSB, keyboard injection
-- [ ] Hardware expansion — IR, NRF24, CC1101 modules
+See the [Features](#features) checklist at the top for exactly what's shipped vs. planned — it's kept up to date as things land, so this section won't drift out of sync with it.
 
 ---
 
