@@ -733,7 +733,6 @@ def main():
     portal_p.add_argument("--channel", type=int, default=6)
     portal_p.add_argument("--bssid", help="Target BSSID for auto EAPOL")
     portal_p.add_argument("--file", help="HTML file to upload (for start or html action)")
-<<<<<<< HEAD
 
     # BLE HID
     ble_p = subparsers.add_parser("ble", help="BLE HID keyboard / DuckyScript injection")
@@ -750,10 +749,6 @@ def main():
     keyboard_p.add_argument("--advertise", default="Keyboard", help="BLE device name to advertise")
     keyboard_p.add_argument("--pair-timeout", type=int, default=60, help="Seconds to wait for pairing")
     keyboard_p.add_argument("--keep-alive", action="store_true", help="Keep BLE advertising after session ends")
-
-=======
-    
->>>>>>> 9043174ef24fbdcc85da9423d60ff9f046ef8c2b
     args = parser.parse_args()
     banner()
     from usb_device import detect_backend
