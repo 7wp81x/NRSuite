@@ -389,7 +389,7 @@ No Python environment handy? Espressif also runs a browser-based flasher that wo
 
 #### From Android only (Termux, no root)
 
-`esptool.py` depends on pyserial, which expects a `/dev/ttyUSB*` node — Android doesn't expose one to unrooted apps, so plain `esptool.py` **will not work** in stock Termux. Use [NRFlasher](https://github.com/7wp81x/NRFlasher) instead — a Termux-native flasher that talks to the USB endpoints directly (same `termux-usb` fd-wrapping approach NRSuite itself uses), with no root and no pyserial required:
+`esptool.py` depends on pyserial, which expects a `/dev/ttyUSB*` node — Android doesn't expose one to unrooted apps, so plain `esptool.py` **will not work** in stock Termux. Use [Termux-ESP-Flasher](https://github.com/7wp81x/Termux-ESP-Flasher) instead. A Termux-native flasher that talks to the USB endpoints directly (same `termux-usb` fd-wrapping approach NRSuite itself uses), with no root and no pyserial required:
 
 ```bash
 pkg update && pkg install python termux-api libusb
