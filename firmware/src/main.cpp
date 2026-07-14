@@ -5,10 +5,21 @@
 #include "sniffer.h"
 #include "portal.h"
 #include "mbedtls/base64.h"
+#include "Preferences.h"
 #ifdef ENABLE_BLE_HID
 #include "ble_hid.h"
 #endif
 
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+    #define MSC_SUPPORTED 1
+    #define HID_SUPPORTED 1
+    #include "mass_storage.h"
+    #include "FileUpload.h"
+    #include "UsbHID.h"
+#else
+    #define MSC_SUPPORTED 0
+    #define HID_SUPPORTED 0
+#endif
 
 // ── Chip name ────────────────────────────────────────────────────────────────
 #if defined(CONFIG_IDF_TARGET_ESP32C3)
@@ -17,6 +28,7 @@
     #define CHIP_NAME "ESP32-S3"
 #elif defined(CONFIG_IDF_TARGET_ESP32S2)
     #define CHIP_NAME "ESP32-S2"
+    #define LED_PIN 17
 #else
     #define CHIP_NAME "ESP32"
 #endif
@@ -451,6 +463,78 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
     }
     #endif
 
+    else if (strcmp(cmd, "START_MSC") == 0) {
+        #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+            proto.sendResp(id, true, "rebooting into mass storage mode");
+            delay(100);
+            Preferences prefs;
+            prefs.begin("boot", false);
+            prefs.putBool("msc_mode", true);
+            prefs.end();
+            proto.sendResp(id, true, "rebooting into mass storage mode");
+            delay(100);
+            esp_restart();
+        #else
+            proto.sendResp(id, false, "mass storage not supported on this chip");
+        #endif
+    }
+
+    // File upload to mass storage
+    else if (strcmp(cmd, "SET_FILE_CHUNK") == 0) {
+        #if MSC_SUPPORTED
+            const char* filename = doc["args"]["filename"] | (const char*)nullptr;
+            const char* b64data  = doc["args"]["data"]     | (const char*)nullptr;
+            bool last            = doc["args"]["last"]     | false;
+
+            if (!filename || !b64data) {
+                proto.sendResp(id, false, "missing filename or data");
+                return;
+            }
+
+            size_t b64len = strlen(b64data);
+            size_t outCap = ((b64len + 3) / 4) * 3 + 2;
+
+            uint8_t* outBuf = (uint8_t*)heap_caps_malloc(outCap, MALLOC_CAP_8BIT);
+            if (!outBuf) {
+                proto.sendResp(id, false, "oom");
+                return;
+            }
+
+            size_t outLen = 0;
+            int ret = mbedtls_base64_decode(outBuf, outCap, &outLen,
+                                            (const unsigned char*)b64data, b64len);
+            if (ret == 0) {
+                bool ok = FileUpload::addChunk(filename, outBuf, outLen, last);
+                if (last) {
+                    proto.sendResp(id, ok, ok ? "file written" : "write failed or rejected extension");
+                } else {
+                    proto.sendResp(id, ok, ok ? "chunk ok" : "rejected (bad extension?)");
+                }
+            } else {
+                proto.sendResp(id, false, "decode failed");
+            }
+
+            heap_caps_free(outBuf);
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
+
+    else if (strcmp(cmd, "START_BADUSB") == 0) {
+        #if HID_SUPPORTED
+            const char* filename = doc["args"]["filename"] | (const char*)nullptr;
+            bool        startMSC = doc["args"]["msc"] | false;
+            if (!filename) { proto.sendResp(id, false, "Ducky script is missing!"); return; }
+            bool ok = UsbHID::armScript(filename, startMSC);
+            proto.sendResp(id, ok, ok ? "Armed successfully" : "failed to arm");
+            #if defined(CONFIG_IDF_TARGET_ESP32S2)
+            digitalWrite(LED_PIN, HIGH);
+            #endif
+        #else
+            proto.sendResp(id, false, "HID not supported on this chip");
+        #endif
+    }
+
     else {
         proto.sendResp(id, false, "unknown command");
     }
@@ -473,9 +557,32 @@ void sendHeartbeat() {
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 void setup() {
+    Keyboard.begin();
+    Preferences prefs;
+    prefs.begin("boot", false);
+    bool mscMode = prefs.getBool("msc_mode", false);
+
+    if (mscMode) prefs.putBool("msc_mode", false);
+
+
+    prefs.end();
+
+    #if (MSC_SUPPORTED || HID_SUPPORTED)
+    if (mscMode) {
+        MassStorage::setup();   // USB.begin() called fresh, nothing else has touched USB yet
+        while (true) delay(1000);
+    } else if(UsbHID::runIfArmed()) {
+        while (true) delay(1000);
+    }
+    #endif
+
     Serial.setRxBufferSize(4096);
     Serial.begin(115200);
-    delay(800);
+    delay(150);
+
+    #if defined(CONFIG_IDF_TARGET_ESP32S2)
+        pinMode(LED_PIN, OUTPUT);
+    #endif
 
     // ── ONE-TIME radio init: APSTA and nothing else ever again ──────────────
     // ★ FIXED: removed the redundant first AP config block.

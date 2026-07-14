@@ -99,8 +99,6 @@ void PortalManager::setupRoutes() {
         // Send to your backend
         if (_proto) _proto->sendEvent("captive_data", doc);
 
-        // Optional: Log to Serial
-        Serial.printf("[CAPTIVE] Credentials from %s\n", client_ip.c_str());
         serializeJsonPretty(doc, Serial);
 
         // Redirect back

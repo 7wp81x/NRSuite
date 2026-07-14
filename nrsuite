@@ -207,7 +207,9 @@ def bootstrap(subcommand: str, extra_args: list[str]) -> None:
 def _setup_bridge(fd=None):
     from usb_device import (
         describe_device, get_cdc_endpoints, claim_device,
-        reset_endpoint_toggles, init_cp2102_bridge
+        reset_endpoint_toggles, init_cp2102_bridge,
+        is_native_cdc, open_native_cdc_port,
+        find_cdc_control_interface,
     )
     from receiver import ReceiverThread
     from sender import Sender
@@ -227,6 +229,13 @@ def _setup_bridge(fd=None):
     init_cp2102_bridge(device)
     reset_endpoint_toggles(device, ep_in, ep_out)
 
+    if is_native_cdc(device):
+        ctrl_intf = find_cdc_control_interface(device, intf)
+        if ctrl_intf != intf:
+            claim_device(device, ctrl_intf, fd_wrapped=(fd is not None))
+        open_native_cdc_port(device, control_interface=ctrl_intf)
+        log(f"Native USB-CDC port opened (DTR asserted, ctrl intf {ctrl_intf}).", C.GREEN, level="ok")
+
     rx = ReceiverThread(device, ep_in, log_func=log)
     rx.start()
     tx = Sender(device, ep_out, log_func=log)
@@ -234,7 +243,6 @@ def _setup_bridge(fd=None):
     proto.log = lambda x: None
 
     return device, rx, tx, proto
-
 
 def _drain_stale(rx):
     for _ in range(12):
@@ -436,6 +444,8 @@ def do_portal(fd: int = None, args=None):
         rx.stop()
         rx.join(timeout=2)
 
+
+
         
 def do_sniff(fd: int = None, args=None):
     from pcap_writer import PcapWriter
@@ -582,6 +592,43 @@ def do_deauth(fd: int = None, args=None):
     log("Deauth finished.", C.GREEN)
 
 
+# ====================== MASS STORAGE ======================
+def do_masstorage(fd: int = None, args=None):
+    log("Entering USB Mass Storage mode...", C.CYAN)
+    _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
+    _drain_stale(rx)
+    _wait_for_ready(proto)
+
+    resp = proto.send_cmd("START_MSC", timeout=5.0)
+
+    if resp is None:
+        # Expected: RESP may or may not make it back before USB re-enumerates.
+        log("No response (expected — USB is about to switch to mass storage "
+            "and drop this connection).", C.YELLOW)
+    elif not resp.get("ok"):
+        log(f"ESP32 refused: {resp.get('msg')}", C.RED, level="err")
+        proto.stop(); rx.stop(); rx.join(timeout=3)
+        return
+
+    proto.stop()
+    rx.stop()
+    rx.join(timeout=3)
+
+    log("Device is now a USB mass storage drive on this machine.", C.GREEN, level="ok")
+    log("Press ESC on the device to exit mass storage mode — there is no "
+        "USB command that can do this, the CDC link is gone until it exits.",
+        C.YELLOW)
+    log("Ctrl+C here only exits this script; it does not stop mass storage "
+        "mode on the device.", C.YELLOW)
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log("Exiting script (device stays in mass storage mode until you "
+            "press ESC on it).", C.YELLOW)
+
 # ====================== BLE HID (badble / keyboard) ======================
 def do_ble_badble(fd: int = None, args=None):
     log("Starting BLE HID (script mode)...", C.CYAN)
@@ -696,6 +743,70 @@ def do_ble_keyboard(fd: int = None, args=None):
     rx.stop()
     rx.join(timeout=3)
 
+def do_badusb(fd: int = None, args=None):
+    _, rx, tx, proto = _setup_bridge(fd)
+    _drain_stale(rx)
+    _wait_for_ready(proto)
+    proto.start()
+    
+    local_path = args.payload
+    if not os.path.exists(args.payload):
+        log(f"Payload file not found: {args.payload}", C.RED, level="err")
+        return
+
+    with open(local_path, "rb") as f:
+        data = f.read()
+
+    remote_filename = "ducky.txt"
+    ext = os.path.splitext(remote_filename)[1].lower()
+    if ext not in (".txt", ".conf"):
+        log(f"Rejected: only .txt/.conf allowed, got '{ext}'", C.RED, level="err")
+        return
+
+    log(f"Uploading ducky script as \033[1;92m{remote_filename}\033[0m...", C.YELLOW)
+    total = len(data)
+    raw_chunk_size = (MAX_B64_LEN * 3) // 4
+    chunks = list(range(0, total, raw_chunk_size)) or [0]  # handle empty file
+
+    for idx, i in enumerate(chunks):
+        chunk   = data[i:i + raw_chunk_size]
+        is_last = (idx == len(chunks) - 1)
+        b64data = base64.b64encode(chunk).decode("ascii")
+
+        resp = None
+        for attempt in range(3):
+            resp = proto.send_cmd("SET_FILE_CHUNK", {
+                "filename": remote_filename,
+                "data": b64data,
+                "last": is_last,
+            }, timeout=5.0)
+            if resp and resp.get("ok"):
+                break
+            log(f"Chunk {idx} attempt {attempt+1} failed: {resp}", C.YELLOW, level="warn")
+            time.sleep(0.3)
+        else:
+            log(f"Chunk {idx} failed after 3 attempts, aborting", C.RED, level="err")
+            return
+
+        percent = int(((i + len(chunk)) / total) * 100) if total else 100
+        log(f"Uploading {percent}% chunk {idx+1}/{len(chunks)}...", C.CYAN)
+
+    log(f"'{remote_filename}' written to device storage.", C.GREEN, level="ok")
+    time.sleep(0.5)
+    log(f"Arming {remote_filename} script..", C.GREEN, level="ok")
+    time.sleep(2)
+    resp = proto.send_cmd("START_BADUSB", {"filename": remote_filename, "msc": args.masstorage}, timeout=10)
+
+    if resp and resp.get("ok"):
+        log(f"Script has been armed, you can now unplug the device.", C.GREEN, level="info")
+        log(f"\033[1;93mCAUTION\033[m: Once you re-plug it, it will execute the ducky script once.", C.GREEN, level="warn")
+
+    else:
+        log(f"Failed to arm script...", C.RED, level="ok")
+    
+    proto.stop()
+    rx.stop()
+    rx.join(timeout=3)
 
 # ====================== MAIN ======================
 def main():
@@ -749,6 +860,14 @@ def main():
     keyboard_p.add_argument("--advertise", default="Keyboard", help="BLE device name to advertise")
     keyboard_p.add_argument("--pair-timeout", type=int, default=60, help="Seconds to wait for pairing")
     keyboard_p.add_argument("--keep-alive", action="store_true", help="Keep BLE advertising after session ends")
+
+    masstorage_p = subparsers.add_parser("masstorage", help="Enter mass storage mode")
+    
+    badusb_p = subparsers.add_parser("badusb", help="USB BadUSB for supported devices.")
+    badusb_p.add_argument("--payload", required=True, help="Path to DuckyScript .txt file")
+    badusb_p.add_argument("--masstorage", action="store_true", help="Enable also mass storage mode")
+    
+
     args = parser.parse_args()
     banner()
     from usb_device import detect_backend
@@ -771,6 +890,10 @@ def main():
         elif args.command == "ble":
             if args.ble_action == "badble": do_ble_badble(args=args)
             elif args.ble_action == "keyboard": do_ble_keyboard(args=args)
+        elif args.command == "masstorage":
+            do_masstorage(args=args)
+        elif args.command == "badusb":
+            do_badusb(args=args)
     elif fd_str is None:
         print("\033[0;93m[*]\033[0m Backend: termux-api (no-root)", file=sys.stderr)
         bootstrap(args.command, sys.argv[2:])
@@ -786,7 +909,10 @@ def main():
         elif args.command == "ble":
             if args.ble_action == "badble": do_ble_badble(fd=fd, args=args)
             elif args.ble_action == "keyboard": do_ble_keyboard(fd=fd, args=args)
-
+        elif args.command == "masstorage":
+            do_masstorage(fd=fd, args=args)
+        elif args.command == "badusb":
+            do_badusb(fd=fd, args=args)
 
 if __name__ == "__main__":
     try:
