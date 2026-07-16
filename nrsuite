@@ -1,9 +1,24 @@
 #!/bin/python3
 
-import os, sys, time, argparse, traceback, subprocess, threading, struct, re, shlex
-import base64, tempfile
-import math
-from protocol import build_cmd, build_html_frame, TYPE_HTML
+import os, sys, time, argparse, traceback, subprocess, threading, struct, re, shlex, base64
+try:
+    from espbridge import (
+        detect_backend, auto_detect_device, request_permission, launch_with_fd,
+        describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
+        init_uart_bridge, is_native_cdc, open_native_cdc_port,
+        find_cdc_control_interface, wrap_direct, wrap_fd,
+        ReceiverThread, Sender, Protocol,
+    )
+except ImportError:
+    print("\033[0;93m[*]\033[0m espbridge not found, installing...", file=sys.stderr)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "espbridge"])
+    from espbridge import (
+        detect_backend, auto_detect_device, request_permission, launch_with_fd,
+        describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
+        init_uart_bridge, is_native_cdc, open_native_cdc_port,
+        find_cdc_control_interface, wrap_direct, wrap_fd,
+        ReceiverThread, Sender, Protocol,
+    )
 
 PROTO_MAX_CHUNK = 1024
 JSON_OVERHEAD_ESTIMATE = 100
@@ -65,7 +80,7 @@ def banner():
 
 \033[1;92m[+]\033[0m Github \033[4;92m@7wp81x/NRSuite\033[0m
 """
-    print(logo)
+    log(logo)
 
 
 def parse_eapol_message(payload: bytes, handshake_state):
@@ -162,8 +177,6 @@ def tail_log(proc):
 
 
 def bootstrap(subcommand: str, extra_args: list[str]) -> None:
-    from usb_device import auto_detect_device, request_permission, launch_with_fd
-
     try:
         device_path = auto_detect_device()
         print(f"\033[0;92m[+]\033[0m Found device: \033[0;92m{device_path}\033[0m", file=sys.stderr)
@@ -205,28 +218,17 @@ def bootstrap(subcommand: str, extra_args: list[str]) -> None:
 
 # ====================== HELPERS ======================
 def _setup_bridge(fd=None):
-    from usb_device import (
-        describe_device, get_cdc_endpoints, claim_device,
-        reset_endpoint_toggles, init_cp2102_bridge,
-        is_native_cdc, open_native_cdc_port,
-        find_cdc_control_interface,
-    )
-    from receiver import ReceiverThread
-    from sender import Sender
-    from protocol import Protocol
     
     if fd is None:
-        from usb_device import wrap_direct
         log("Backend: \033[0;92mroot (direct libusb)\033[0m", C.GREEN)
         device = wrap_direct()
     else:
-        from usb_device import wrap_fd
         device = wrap_fd(fd)
 
     log("Starting bridge, Please wait...", C.GREEN, level="ok")
     ep_in, ep_out, intf = get_cdc_endpoints(device)
     claim_device(device, intf, fd_wrapped=(fd is not None))
-    init_cp2102_bridge(device)
+    init_uart_bridge(device)
     reset_endpoint_toggles(device, ep_in, ep_out)
 
     if is_native_cdc(device):
@@ -261,6 +263,18 @@ def _wait_for_ready(proto, timeout=2.0):
 
 
 # ====================== SCAN ======================
+def _signal_bars(rssi: int) -> str:
+    """Return a quick visual signal strength indicator."""
+    if rssi >= -50:
+        return "▂▄▆█"
+    elif rssi >= -65:
+        return "▂▄▆_"
+    elif rssi >= -75:
+        return "▂▄__"
+    else:
+        return "▂___"
+
+
 def do_scan(fd: int = None):
     log("Starting network scan...", C.CYAN)
     _, rx, tx, proto = _setup_bridge(fd)
@@ -298,20 +312,36 @@ def do_scan(fd: int = None):
         log("No networks found.", level="warn")
         return
 
+    # Dedupe by BSSID (some APs beacon on multiple channels during scan)
+    seen = {}
+    for n in networks:
+        bssid = n.get("bssid", "")
+        if bssid not in seen or n.get("rssi", -999) > seen[bssid].get("rssi", -999):
+            seen[bssid] = n
+    networks = list(seen.values())
     networks.sort(key=lambda n: n.get("rssi", -999), reverse=True)
 
-    print("\n" + "=" * 90, file=sys.stderr, flush=True)
-    print(f"{'SSID':<30} {'BSSID':<18} {'CH':>3} {'RSSI':>6}  SECURITY", file=sys.stderr, flush=True)
-    print("-" * 90, file=sys.stderr, flush=True)
+    open_count = sum(1 for n in networks if "OPEN" in (n.get("security") or "").upper())
 
     for n in networks:
-        ssid = (n.get("ssid") or "(hidden)")[:29]
+        ssid = n.get("ssid") or "(hidden)"
+        ssid = ssid if len(ssid) <= 31 else ssid[:28] + "..."
         rssi = n.get("rssi", 0)
-        color = C.GREEN if rssi > -65 else C.YELLOW if rssi > -80 else C.RED
-        print(f"{color}{ssid:<30} {n.get('bssid',''):<18} {n.get('channel',''):>3}  "
-              f"{rssi:>6}  {n.get('security','')}{C.RESET}", file=sys.stderr, flush=True)
+        bssid = n.get("bssid", "")
+        channel = n.get("channel", "")
+        security = n.get("security", "") or "?"
+        bars = _signal_bars(rssi)
 
-    print(f"\n{len(networks)} networks found.\n", file=sys.stderr, flush=True)
+        sig_color = C.GREEN if rssi > -65 else C.YELLOW if rssi > -80 else C.RED
+        sec_color = C.RED if "OPEN" in security.upper() else C.RESET
+
+        line = (f"{ssid:<32} {bssid:<18} {channel:>3}  {rssi:>4}  "
+                f"{bars:<6} {sec_color}{security}{C.RESET}")
+        print(f"{sig_color}{line}{C.RESET}", file=sys.stderr, flush=True)
+
+    print(f"\n\033[1;92m[+]\033[0m {len(networks)} networks found"
+          + (f", {C.RED}{open_count} open{C.RESET}" if open_count else "")
+          + ".\n", file=sys.stderr, flush=True)
 
 
 def do_portal(fd: int = None, args=None):
@@ -869,8 +899,8 @@ def main():
     
 
     args = parser.parse_args()
-    banner()
-    from usb_device import detect_backend
+    if not os.environ.get("NRSUITE_CHILD"):
+        banner()
 
     try:
         backend = detect_backend()
