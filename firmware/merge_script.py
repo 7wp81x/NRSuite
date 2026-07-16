@@ -12,7 +12,7 @@ NAME_MAP = {
 # Bootloader load offset differs by chip family
 BOOT_OFFSET = {
     "esp32":   "0x1000",  # classic ESP32 - different offset!
-    "esp32s2": "0x0",
+    "esp32s2": "0x1000",
     "esp32s3": "0x0",
     "esp32c3": "0x0",
 }
