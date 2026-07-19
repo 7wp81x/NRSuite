@@ -623,7 +623,8 @@ def do_deauth(fd: int = None, args=None):
 
 
 # ====================== MASS STORAGE ======================
-def do_masstorage(fd: int = None, args=None):
+
+def do_masstorage_start(fd: int = None, args=None):
     log("Entering USB Mass Storage mode...", C.CYAN)
     _, rx, tx, proto = _setup_bridge(fd)
     proto.start()
@@ -658,6 +659,104 @@ def do_masstorage(fd: int = None, args=None):
     except KeyboardInterrupt:
         log("Exiting script (device stays in mass storage mode until you "
             "press ESC on it).", C.YELLOW)
+
+
+def do_masstorage_files(fd: int = None, args=None):
+    log("Listing files on device storage...", C.CYAN)
+    _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
+    _drain_stale(rx)
+    _wait_for_ready(proto)
+
+    resp = proto.send_cmd("MSC_LIST", timeout=5.0)
+
+    if not resp or not resp.get("ok"):
+        log(f"Failed to list files: {resp.get('msg') if resp else 'timed out'}",
+            C.RED, level="err")
+    else:
+        files = resp.get("files", [])
+        if not files:
+            log("  (no files)", C.YELLOW)
+        else:
+            for f in files:
+                log(f"  {f.get('name', '?'):<30} {f.get('size', 0)} bytes", C.CYAN)
+        total = resp.get("total", 0)
+        used  = resp.get("used", 0)
+        free  = resp.get("free", 0)
+        log(f"  [usage] {used}/{total} bytes used, {free} bytes free", C.YELLOW)
+
+    proto.stop()
+    rx.stop()
+    rx.join(timeout=3)
+
+
+def do_masstorage_delete(fd: int = None, args=None):
+    path = args.file
+    log(f"Deleting {path}...", C.CYAN)
+    _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
+    _drain_stale(rx)
+    _wait_for_ready(proto)
+
+    list_resp = proto.send_cmd("MSC_LIST", timeout=5.0)
+    exists = False
+    if list_resp and list_resp.get("ok"):
+        exists = any(f.get("name") == path or f.get("name") == f"/{path}"
+                     for f in list_resp.get("files", []))
+
+    if not exists:
+        log(f"File not found: {path}", C.YELLOW)
+        proto.stop(); rx.stop(); rx.join(timeout=3)
+        return
+
+    resp = proto.send_cmd("MSC_DELETE", {"path": path}, timeout=5.0)
+    if not resp or not resp.get("ok"):
+        log(f"Delete failed: {resp.get('msg') if resp else 'timed out'}",
+            C.RED, level="err")
+    else:
+        log(f"Deleted {path}", C.GREEN, level="ok")
+
+    proto.stop()
+    rx.stop()
+    rx.join(timeout=3)
+
+
+def do_masstorage_free(fd: int = None, args=None):
+    log("Checking storage usage...", C.CYAN)
+    _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
+    _drain_stale(rx)
+    _wait_for_ready(proto)
+
+    resp = proto.send_cmd("MSC_SPACE", timeout=5.0)
+    if not resp or not resp.get("ok"):
+        log(f"Failed to get storage info: {resp.get('msg') if resp else 'timed out'}",
+            C.RED, level="err")
+    else:
+        total = resp.get("total", 0)
+        used  = resp.get("used", 0)
+        free  = resp.get("free", 0)
+        log(f"Total: {total} bytes", C.CYAN)
+        log(f"Used:  {used} bytes", C.CYAN)
+        log(f"Free:  {free} bytes", C.CYAN)
+
+    proto.stop()
+    rx.stop()
+    rx.join(timeout=3)
+
+
+def do_masstorage(fd: int = None, args=None):
+    action = getattr(args, "msc_action", None)
+    if action == "start":
+        do_masstorage_start(fd, args)
+    elif action == "files":
+        do_masstorage_files(fd, args)
+    elif action == "delete":
+        do_masstorage_delete(fd, args)
+    elif action == "free":
+        do_masstorage_free(fd, args)
+    else:
+        log("No mass storage action given. Use: start | files | delete <file> | free", C.YELLOW)
 
 # ====================== BLE HID (badble / keyboard) ======================
 def do_ble_badble(fd: int = None, args=None):
@@ -716,10 +815,76 @@ def do_ble_badble(fd: int = None, args=None):
     rx.stop()
     rx.join(timeout=3)
 
+# BLE Keyboard helper.
+def _split_pipe_commands(raw: str):
+    """
+    Splits a raw input line into individual script commands using '|' as
+    the delimiter, with escaping:
+      |    -> command separator
+      ||   -> literal "|" character (no separator)
+      |||  -> literal "|" character followed by a newline, still no separator
+
+    Example:
+      "DELAY 3000|STRINGLN test|STRING HELLO WORLD|"
+        -> ["DELAY 3000", "STRINGLN test", "STRING HELLO WORLD", ""]
+      "STRING a||b"
+        -> ["STRING a|b"]
+      "STRING a|||b"
+        -> ["STRING a|\nb"]
+    """
+    PLACEHOLDER_LITERAL = "\x00PIPE_LITERAL\x00"
+    PLACEHOLDER_LITERAL_NL = "\x00PIPE_LITERAL_NL\x00"
+
+    # Longest match first so ||| isn't mis-split into || + |
+    tmp = raw.replace("|||", PLACEHOLDER_LITERAL_NL)
+    tmp = tmp.replace("||", PLACEHOLDER_LITERAL)
+
+    parts = tmp.split("|")
+
+    result = []
+    for part in parts:
+        part = part.replace(PLACEHOLDER_LITERAL_NL, "|\n")
+        part = part.replace(PLACEHOLDER_LITERAL, "|")
+        result.append(part)
+
+    return result
+
 
 def do_ble_keyboard(fd: int = None, args=None):
     log("Starting BLE HID (realtime keyboard mode)...", C.CYAN)
-    log("Type on this terminal — keystrokes are relayed live. Ctrl+C to stop.", C.YELLOW)
+    log("Type text normally (sent as STRINGLN), or use script commands directly:", C.YELLOW)
+    log("  GUI r          — key combo", C.YELLOW)
+    log("  CTRL ALT DEL   — multi-key combo", C.YELLOW)
+    log("  STRING hello   — no newline", C.YELLOW)
+    log("  DELAY 500      — pause in ms", C.YELLOW)
+    log("Use | to chain multiple commands on one line:", C.YELLOW)
+    log("  DELAY 3000|STRINGLN test|STRING HELLO WORLD|", C.YELLOW)
+    log("  || = literal '|' character, ||| = literal '|' + newline", C.YELLOW)
+    log("Ctrl+C to stop.", C.YELLOW)
+
+    SCRIPT_COMMANDS = {"STRING", "STRINGLN", "DELAY", "REM"}
+    KEY_NAMES = {
+        "CTRL", "CONTROL", "LCTRL", "RCTRL",
+        "ALT", "LALT", "RALT",
+        "SHIFT", "LSHIFT", "RSHIFT",
+        "GUI", "WINDOWS", "COMMAND", "LGUI", "RGUI",
+        "ENTER", "RETURN", "TAB", "ESC", "ESCAPE", "BACKSPACE", "BACK",
+        "DELETE", "DEL", "SPACE", "UP", "DOWN", "LEFT", "RIGHT",
+        "HOME", "END", "INSERT", "PAGEUP", "PGUP", "PAGEDOWN", "PGDN",
+        "PRINTSCREEN", "PRTSC",
+    }
+
+    def looks_like_script_line(line: str) -> bool:
+        first = line.split(" ", 1)[0].upper()
+        if first in SCRIPT_COMMANDS:
+            return True
+        if first in KEY_NAMES:
+            return True
+        if first.startswith("F") and first[1:].isdigit():
+            n = int(first[1:])
+            if 1 <= n <= 12:
+                return True
+        return False
 
     _, rx, tx, proto = _setup_bridge(fd)
     _drain_stale(rx)
@@ -749,29 +914,41 @@ def do_ble_keyboard(fd: int = None, args=None):
         proto.stop(); rx.stop(); rx.join(timeout=2)
         return
 
-    # Minimal line-based passthrough: each line typed here is sent as a
-    # STRINGLN via the same script interpreter, one line at a time, so a
-    # single keystroke's worth of latency stays low without needing raw
-    # per-keypress terminal handling (termux stdin is line-buffered anyway).
+    time.sleep(1.0)
+
     try:
         while True:
+            log("[SEND KEY (STRINGLN)] >>", C.CYAN)
             line = sys.stdin.readline()
             if not line:
                 break
-            text = line.rstrip("\n")
-            if not text:
+            raw = line.rstrip("\n")
+            if not raw:
                 continue
-            proto.send_cmd("BLE_RUN_SCRIPT", {"script": f"STRINGLN {text}"}, timeout=10)
+
+            for text in _split_pipe_commands(raw):
+                if not text:
+                    continue
+
+                if looks_like_script_line(text):
+                    script = text
+                else:
+                    script = f"STRINGLN {text}"
+
+                resp = proto.send_cmd("BLE_RUN_SCRIPT", {"script": script}, timeout=10)
+                if not resp or not resp.get("ok"):
+                    msg = resp.get("msg") if resp else "timed out"
+                    log(f"Failed to send {text!r}: {msg}", C.RED, level="err")
     except KeyboardInterrupt:
         log("\nStopping realtime session...", C.YELLOW)
+    finally:
+        proto.send_cmd("BLE_RELEASE_ALL", timeout=5)
+        if not args.keep_alive:
+            proto.send_cmd("BLE_STOP", timeout=5)
+        proto.stop()
+        rx.stop()
+        rx.join(timeout=3)
 
-    proto.send_cmd("BLE_RELEASE_ALL", timeout=5)
-    if not args.keep_alive:
-        proto.send_cmd("BLE_STOP", timeout=5)
-
-    proto.stop()
-    rx.stop()
-    rx.join(timeout=3)
 
 def do_badusb(fd: int = None, args=None):
     _, rx, tx, proto = _setup_bridge(fd)
@@ -891,7 +1068,16 @@ def main():
     keyboard_p.add_argument("--pair-timeout", type=int, default=60, help="Seconds to wait for pairing")
     keyboard_p.add_argument("--keep-alive", action="store_true", help="Keep BLE advertising after session ends")
 
-    masstorage_p = subparsers.add_parser("masstorage", help="Enter mass storage mode")
+    masstorage_p = subparsers.add_parser("masstorage", help="Mass storage operations")
+    masstorage_sub = masstorage_p.add_subparsers(dest="msc_action", required=True)
+    msc_start_p = masstorage_sub.add_parser("start", help="Enter USB mass storage mode")
+    msc_files_p = masstorage_sub.add_parser("files", help="List files without entering MSC mode")
+    msc_delete_p = masstorage_sub.add_parser("delete", help="Delete a file if it exists")
+    msc_delete_p.add_argument("file", help="Path/name of the file to delete")
+    msc_free_p = masstorage_sub.add_parser("free", help="Show storage free/used/total size")
+    
+    masstorage_p.set_defaults(func=do_masstorage)
+    
     
     badusb_p = subparsers.add_parser("badusb", help="USB BadUSB for supported devices.")
     badusb_p.add_argument("--payload", required=True, help="Path to DuckyScript .txt file")
@@ -929,20 +1115,15 @@ def main():
         bootstrap(args.command, sys.argv[2:])
     else:
         fd = int(fd_str)
-        if args.command == "scan":
-            do_scan(fd=fd)
-        elif args.command == "sniff":
-            do_sniff(fd=fd, args=args)
-        elif args.command == "deauth":
-            do_deauth(fd=fd, args=args)
+        if args.command == "scan":do_scan(fd=fd)
+        elif args.command == "sniff":do_sniff(fd=fd, args=args)
+        elif args.command == "deauth":do_deauth(fd=fd, args=args)
         elif args.command == "portal": do_portal(fd=fd, args=args)
         elif args.command == "ble":
             if args.ble_action == "badble": do_ble_badble(fd=fd, args=args)
             elif args.ble_action == "keyboard": do_ble_keyboard(fd=fd, args=args)
-        elif args.command == "masstorage":
-            do_masstorage(fd=fd, args=args)
-        elif args.command == "badusb":
-            do_badusb(fd=fd, args=args)
+        elif args.command == "masstorage": do_masstorage(fd=fd, args=args)
+        elif args.command == "badusb": do_badusb(fd=fd, args=args)
 
 if __name__ == "__main__":
     try:

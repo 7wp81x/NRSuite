@@ -9,17 +9,20 @@ namespace BleHid {
 
 static HijelHID_BLEKeyboard* keyboard = nullptr;
 static volatile bool advertising = false;
+static volatile bool connected   = false;
+static String peerAddr = "";
 
 void begin(const String& deviceName) {
     if (keyboard) {
-        // Already running → just make sure it's active
+        if (keyboard->isPaired()) {
+            return;
+        }
         if (!advertising) {
-            keyboard->begin();           // Restart advertising if needed
+            keyboard->begin();
             advertising = true;
         }
         return;
     }
-
     keyboard = new HijelHID_BLEKeyboard(deviceName.c_str(), "NRSuite", 100);
     keyboard->begin();
     advertising = true;
@@ -28,11 +31,8 @@ void begin(const String& deviceName) {
 void end() {
     if (!keyboard) return;
     keyboard->releaseAll();
-    
-    // Stop advertising via NimBLE
     NimBLEDevice::stopAdvertising();
     advertising = false;
-
     delete keyboard;
     keyboard = nullptr;
 }
@@ -89,13 +89,13 @@ uint8_t resolveKey(String keyName) {
     if (keyName == "PAGEDOWN" || keyName == "PGDN") return KEY_PAGE_DOWN;
     if (keyName == "PRINTSCREEN" || keyName == "PRTSC") return KEY_PRINT_SCREEN;
 
-    // Function keys F1–F12
+
     if (keyName.startsWith("F") && keyName.length() <= 3) {
         int num = keyName.substring(1).toInt();
         if (num >= 1 && num <= 12) return KEY_F1 + (num - 1);
     }
 
-    // Single letters A–Z + numbers
+
     if (keyName.length() == 1) {
         char c = keyName[0];
         if (c >= 'A' && c <= 'Z') return KEY_A + (c - 'A');
@@ -108,7 +108,7 @@ uint8_t resolveKey(String keyName) {
 
 // ====================== Script mode ======================
 int runScript(const String& payload) {
-    if (!keyboard || !keyboard->isPaired()) return 0;
+    if (!isConnected()) return 0;
 
     int lineCount = 0;
     int lineStart = 0;
@@ -172,13 +172,13 @@ void stop() {
 
 // ====================== Realtime mode ======================
 void keyDown(const String& keyName) {
-    if (!keyboard || !keyboard->isPaired()) return;
+    if (!isConnected()) return;
     uint8_t key = resolveKey(keyName);
     if (key != 0) keyboard->press(key);
 }
 
 void keyUp(const String& keyName) {
-    if (!keyboard || !keyboard->isPaired()) return;
+    if (!isConnected()) return;
     uint8_t key = resolveKey(keyName);
     if (key != 0) keyboard->release(key);
 }
