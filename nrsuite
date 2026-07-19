@@ -80,7 +80,7 @@ def banner():
 
 \033[1;92m[+]\033[0m Github \033[4;92m@7wp81x/NRSuite\033[0m
 """
-    log(logo)
+    print(logo)
 
 
 def parse_eapol_message(payload: bytes, handshake_state):
@@ -192,7 +192,7 @@ def bootstrap(subcommand: str, extra_args: list[str]) -> None:
         sys.exit(1)
 
     script = os.path.abspath(__file__)
-    cmd = f"python {script} {subcommand} " + ' '.join(shlex.quote(arg) for arg in extra_args)
+    cmd = f"env NRSUITE_CHILD=1 python {script} {subcommand} " + ' '.join(shlex.quote(arg) for arg in extra_args)
 
     def _tail(line: str) -> None:
         print(line, end="", file=sys.stderr, flush=True)
@@ -322,7 +322,7 @@ def do_scan(fd: int = None):
     networks.sort(key=lambda n: n.get("rssi", -999), reverse=True)
 
     open_count = sum(1 for n in networks if "OPEN" in (n.get("security") or "").upper())
-
+    print("",flush=True)
     for n in networks:
         ssid = n.get("ssid") or "(hidden)"
         ssid = ssid if len(ssid) <= 31 else ssid[:28] + "..."
@@ -337,9 +337,9 @@ def do_scan(fd: int = None):
 
         line = (f"{ssid:<32} {bssid:<18} {channel:>3}  {rssi:>4}  "
                 f"{bars:<6} {sec_color}{security}{C.RESET}")
-        print(f"{sig_color}{line}{C.RESET}", file=sys.stderr, flush=True)
+        print(f"\033[0;34m  [*] {sig_color}{line}{C.RESET}", file=sys.stderr, flush=True)
 
-    print(f"\n\033[1;92m[+]\033[0m {len(networks)} networks found"
+    print(f"\n\033[1;32m[+]\033[0m {len(networks)} networks found"
           + (f", {C.RED}{open_count} open{C.RESET}" if open_count else "")
           + ".\n", file=sys.stderr, flush=True)
 
