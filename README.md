@@ -42,6 +42,8 @@ Checklist of implemented functionality — update this when adding/removing feat
 - [x] **Captive portal / AP mode** — start/stop/status, custom SSID + channel, custom HTML upload, optional auto EAPOL capture against a target BSSID
 - [x] **BLE HID (BadBLE)** — advertise as a BLE keyboard, run a DuckyScript payload against a paired host
 - [x] **BLE HID (realtime keyboard)** — live keystroke passthrough from your terminal to a paired BLE host
+- [x] **USB Mass Storage** — expose onboard flash as a real USB drive to the host; list/read/write/delete files over the bridge without entering MSC mode
+- [x] **BadUSB** — run a DuckyScript payload over native USB HID, with optional simultaneous mass storage exposure
 - [x] **Heartbeat** — uptime + free heap reported every 5 seconds for health monitoring
 - [ ] Beacon broadcasting (beacon spam, custom/hidden SSIDs)
 - [ ] BLE scanning, advertising, device discovery, BLE spam
@@ -49,16 +51,18 @@ Checklist of implemented functionality — update this when adding/removing feat
 
 > BLE HID requires a chip with a Bluetooth radio (C3, S3, or classic ESP32). ESP32-S2 is Wi-Fi only and does not support this feature — see [Hardware](#hardware).
 
+> USB Mass Storage and BadUSB require a chip with **native USB-OTG** (S2, S3). File read/write/delete/list operations work on any chip via the bridge protocol regardless of USB-OTG support — only entering actual MSC/HID device mode needs it. ESP32-C3 and classic ESP32 devkits have no USB-OTG peripheral, so `masstorage start` and `badusb` are unavailable on those boards — see [Hardware](#hardware).
+
 ---
 
 ## Hardware
 
 | Component | Status | Notes |
 |-----------|:------:|-------|
-| **ESP32-C3** | ✅ Tested | Native USB CDC, ~$3 — covers both SuperMini and regular C3 devkit boards, WiFi + BLE HID support |
-| **ESP32-S3** (any board) | ✅ Tested | More RAM/flash, native USB CDC, dual-core, WiFi + BLE HID support |
-| ESP32-S2 (any board) | ⚠️ Untested | Native USB (OTG), single-core, WiFi only — **no BLE radio**, so BadBLE/keyboard is unavailable on this chip regardless of testing status |
-| **Classic ESP32 devkit (WROOM-32)** | ✅ Tested | Requires external USB-UART bridge on the board — no native USB CDC. CP2102, CH340, CH9102, and FTDI FT232 are explicitly supported with correct reset/init handling; other bridge chips will likely still work via generic CDC/bulk-endpoint fallback, but without guaranteed reset timing. WiFi + BLE HID support |
+| **ESP32-C3** | ✅ Tested | Native USB CDC, ~$3 — covers both SuperMini and regular C3 devkit boards, WiFi + BLE HID support. No USB-OTG — mass storage device mode and BadUSB HID injection are unavailable (file read/write/delete/list over the bridge still work) |
+| **ESP32-S3** (any board) | ✅ Tested | More RAM/flash, native USB CDC, dual-core, WiFi + BLE HID + USB Mass Storage + BadUSB support |
+| ESP32-S2 (any board) | ✅ Tested | Native USB (OTG), single-core, WiFi + USB Mass Storage + BadUSB support — **no BLE radio**, so BadBLE/keyboard is unavailable on this chip regardless of testing status |
+| **Classic ESP32 devkit (WROOM-32)** | ✅ Tested | Requires external USB-UART bridge on the board — no native USB CDC and no USB-OTG. CP2102, CH340, CH9102, and FTDI FT232 are explicitly supported with correct reset/init handling; other bridge chips will likely still work via generic CDC/bulk-endpoint fallback, but without guaranteed reset timing. WiFi + BLE HID support — mass storage device mode and BadUSB unavailable (no USB-OTG hardware) |
 | USB OTG cable / adapter | — | USB-C OTG or micro-USB OTG depending on your phone |
 | Android phone | — | Any version with USB host support — no root required |
 
@@ -77,8 +81,10 @@ The Wi-Fi module uses the ESP32's built-in 2.4 GHz radio — no external antenna
 
 ```bash
 pkg update && pkg install python termux-api libusb
-pip install pyusb
+pip install espbridge
 ```
+
+`espbridge` pulls in `pyusb` automatically — `nrsuite` will also auto-install `espbridge` itself on first run if it's missing.
 
 Also install the **Termux:API** companion app from [F-Droid](https://f-droid.org/packages/com.termux.api/) — *not* the Play Store version, which is outdated.
 
@@ -125,19 +131,32 @@ All commands follow the same pattern — the script detects the USB device, requ
 ```
 
 ```
-Found device: /dev/bus/usb/002/008
-Requesting USB permission (tap OK)...
+_____ _____ _____     _ _       
+|   | | __  |   __|_ _|_| |_ ___ 
+| | | |    -|__   | | | |  _| -_|
+|_|___|__|__|_____|___|_|_| |___| v1.2
 
-[2026-06-19 17:38:32] === WiFi Network Scan ===
-[2026-06-19 17:38:32] Device: 303A:1001  ESP32-S3 native USB CDC
+[+] Github @7wp81x/NRSuite
 
-==========================================================================================
-SSID                           BSSID               CH   RSSI  SECURITY
-------------------------------------------------------------------------------------------
-HomeNetwork                    C8:3A:35:CA:75:48   11    -64  WPA/WPA2-PSK
-OfficeWifi                     B0:4E:26:CC:2E:F8    3    -66  WPA2-PSK
+[*] Backend: termux-api (no-root)
+[+] Found device: /dev/bus/usb/002/051
+[*] Requesting USB permission...
 
-2 networks found.
+[*] Starting network scan...
+[+] Starting bridge, Please wait...
+[+] Native USB-CDC port opened (DTR asserted, ctrl intf 2).
+[*] ESP32-S3: OK, wireless network scan initialized
+
+  [*] HomeWifi                     XX:XX:XX:XX:2E:F8    3   -59  ▂▄▆_   WPA2-PSK
+  [*] OfficeWifi                   XX:XX:XX:XX:75:48   11   -66  ▂▄__   WPA/WPA2-PSK
+  [*] Free Wifi                    XX:XX:XX:XX:2A:BF    6   -70  ▂▄__   OPEN
+  [*] Hotspot 1                    XX:XX:XX:XX:DA:D6    1   -78  ▂___   OPEN
+  [*] Network_Kid                  XX:XX:XX:XX:XX:A7    1   -81  ▂___   OPEN
+
+[+] 5 networks found, 3 open.
+
+[+] Process finished (exit 0).
+
 ```
 
 ### Capture packets
@@ -229,6 +248,48 @@ Sends 15 deauth frames to disconnect clients on the target BSSID. To capture the
 
 > ⚠️ Only use BLE HID injection on devices you own or have explicit written permission to test.
 
+### USB Mass Storage
+
+> `masstorage start` and `badusb` require a chip with native USB-OTG (S2, S3). `files`/`delete`/`free` work on any chip over the bridge protocol. See [Hardware](#hardware).
+
+```bash
+# Enter USB mass storage mode — host sees the ESP32 as a USB drive
+./nrsuite masstorage start
+
+# List files without entering MSC mode (works even on C3/devkit)
+./nrsuite masstorage files
+
+# Delete a file if it exists
+./nrsuite masstorage delete secret.txt
+
+# Show storage free / used / total size
+./nrsuite masstorage free
+```
+
+`masstorage start` re-enumerates the USB connection as a mass storage device — there is no software command to exit this mode; press the physical button (or reset) on the device to return to CDC bridge mode.
+
+### BadUSB
+
+> Requires a chip with native USB-OTG (S2, S3). Not available on C3 or classic ESP32 devkit — see [Hardware](#hardware).
+
+```bash
+# Run a DuckyScript payload over native USB HID
+./nrsuite badusb --payload payload.txt
+
+# Also expose mass storage alongside the HID device
+./nrsuite badusb --payload payload.txt --masstorage
+```
+
+Payload scripts support a few extra device-control lines alongside standard DuckyScript:
+
+```
+DEVICE_REBOOT       # restart the ESP32
+DEVICE_MSC_START    # start mass storage mode from within the script (if not launched with --masstorage)
+DEVICE_MSC_STOP     # hide/detach the mass storage device without a full reboot
+```
+
+> ⚠️ Only use BadUSB injection on devices you own or have explicit written permission to test.
+
 ---
 
 ## Environments
@@ -250,7 +311,7 @@ libusb_wrap_sys_device(fd)
 ```
 
 ```bash
-pkg install python termux-api libusb && pip install pyusb
+pkg install python termux-api libusb && pip install espbridge
 # Install Termux:API from F-Droid
 ./nrsuite scan  # permission popup appears on first run
 ```
@@ -260,7 +321,7 @@ pkg install python termux-api libusb && pip install pyusb
 When running as uid 0, libusb opens `/dev/bus/usb` directly — no `termux-usb`, no permission dialog, no bootstrap subprocess. Faster and simpler.
 
 ```bash
-pkg install python libusb && pip install pyusb
+pkg install python libusb && pip install espbridge
 tsu  # or: sudo ./nrsuite scan
 ./nrsuite scan
 ```
@@ -272,7 +333,7 @@ Works in both the NetHunter terminal (Kali chroot, root) and a Termux session ru
 ```bash
 # In the NetHunter terminal (root)
 apt update && apt install python3 python3-pip libusb-1.0-0
-pip3 install pyusb
+pip3 install espbridge
 ./nrsuite scan
 
 # Note: if cdc_acm claimed the interface, nrsuite detaches it automatically
@@ -315,7 +376,7 @@ Detection is fully automatic — no `--root` flag or manual configuration needed
 |-------|---------------------|-----------|:-------:|:------:|
 | ESP32-C3 | `esp32-c3` | Native USB CDC | `303A:1001` | ✅ Tested |
 | ESP32-S3 | `esp32-s3` | Native USB CDC | `303A:1001` | ✅ Tested |
-| ESP32-S2 | `esp32-s2` | Native USB (OTG) | `303A:0002` | ⚠️ Untested |
+| ESP32-S2 | `esp32-s2` | Native USB (OTG) | `303A:0002` | ✅ Tested |
 | Classic ESP32 devkit (WROOM-32) | `esp32-devkit` | External USB-UART (CP2102/CH340) | chip-dependent | ✅ Tested |
 
 ### Key build flags
@@ -400,18 +461,16 @@ pip install pyusb
 Install the **Termux:API** companion app from [F-Droid](https://f-droid.org/packages/com.termux.api/) — *not* the Play Store version, which is outdated.
 
 ```bash
-git clone https://github.com/7wp81x/Termux-ESP-Flasher
-cd Termux-ESP-Flasher
-chmod +x nrflash
+pip3 install nrflash
 
 # Auto-detects the chip — omit --chip unless you want to force it
-./nrflash write --offset 0x0 nrsuite-esp32c3.bin
+nrflash write --offset 0x0 nrsuite-*
 
-# Flash + verify against the device afterward
-./nrflash write --offset 0x0 nrsuite-esp32c3.bin --verify
+# No stub, if above failed, try also holding the boot btn while plugging in the device.
+nrflash write --offset 0x0 nrsuite-* --no-stub
 ```
 
-See the [NRFlasher README](https://github.com/7wp81x/NRFlasher) for multi-file writes (bootloader + partitions + app in one session), baud auto-negotiation, and troubleshooting.
+See the [Termux-ESP-Flasher README](https://github.com/7wp81x/Termux-ESP-Flasher) for more informations.
 
 ---
 
@@ -459,6 +518,35 @@ PCAP frames use sliding-window flow control: the ESP32 buffers up to `SNIFF_MAX_
 | `BLE_STOP` | — | `{"ok": true}` |
 | `BLE_END` | — | `{"ok": true}` |
 
+### Supported CMDs (Mass Storage module)
+
+> `MSC_SETUP` requires a board with native USB-OTG (S2, S3) and responds `{"ok": false, "msg": "storage not supported on this chip"}` elsewhere. `MSC_LIST`/`MSC_READ`/`MSC_WRITE`/`MSC_DELETE`/`MSC_SPACE` work on any chip — they only touch the onboard FFat filesystem, not USB-OTG hardware.
+
+| CMD | Args | Response |
+|-----|------|----------|
+| `MSC_SETUP` | — | `{"ok": true, "msg": "msc mode active"}` |
+| `MSC_LIST` | — | `{"ok": true, "files": [{"name": "...", "size": N}, ...], "total": N, "used": N, "free": N}` |
+| `MSC_READ` | `{"path": "..."}` | `{"ok": true, "path": "...", "content": "...", "size": N}` |
+| `MSC_WRITE` | `{"path": "...", "content": "...", "append": bool}` | `{"ok": true}` |
+| `MSC_DELETE` | `{"path": "..."}` | `{"ok": true}` |
+| `MSC_SPACE` | — | `{"ok": true, "total": N, "used": N, "free": N}` |
+
+### Supported CMDs (BadUSB module)
+
+> Only available on boards with native USB-OTG (S2, S3). Not compiled in on ESP32-C3 or classic ESP32 devkit builds — those chips have no USB-OTG peripheral.
+
+| CMD | Args | Response |
+|-----|------|----------|
+| `START_MSC` | — | May not respond — USB re-enumerates as mass storage, dropping the CDC link |
+
+In addition to standard DuckyScript, payload scripts can include device-control lines (parsed inline, not sent as separate bridge CMDs):
+
+| Script line | Effect |
+|-------------|--------|
+| `DEVICE_REBOOT` | Restarts the ESP32 (`ESP.restart()`) |
+| `DEVICE_MSC_START` | Starts mass storage mode mid-script (equivalent to `MassStorage::setup()`) — useful if the device wasn't launched with `--masstorage` |
+| `DEVICE_MSC_STOP` | Detaches the mass storage device (`setMediaPresent(false)`) without a full reboot |
+
 ---
 
 ## Project Structure
@@ -471,17 +559,33 @@ nrsuite/
 │   │   ├── main.cpp              # Arduino entry point, CMD dispatcher
 │   │   ├── sniffer.cpp / .h      # Promiscuous capture, radiotap builder
 │   │   ├── ble_hid.cpp / .h      # BLE HID keyboard (BadBLE / realtime), C3/S3/devkit only
+│   │   ├── mass_storage.cpp / .h # USB mass storage + file ops, MSC mode requires S2/S3
+│   │   ├── UsbHID.cpp / .h       # Native USB HID keyboard (BadUSB), S2/S3 only
 │   │   └── override_sanity.cpp   # Bypass IDF raw frame sanity check
 │   └── lib/
 │       └── BridgeProtocol/       # Framed binary protocol (ESP32 side)
 ├── nrsuite                       # Main CLI (chmod +x, run as ./nrsuite)
-├── protocol.py                   # FrameParser + Protocol class
-├── receiver.py                   # USB bulk IN background thread
-├── sender.py                     # Thread-safe USB bulk OUT
-├── usb_device.py                 # Device detection, fd wrapping, endpoints
 ├── pcap_writer.py                # pcap writer, buffered + stream modes
 ├── data/                         # Logs and captures (auto-created, gitignored)
 └── README.md
+```
+
+USB/bridge-protocol plumbing (`protocol.py`, `receiver.py`, `sender.py`, `usb_device.py`) has moved out of this repo into a standalone pip package, [`espbridge`](https://github.com/7wp81x/ESP-Bridge) — `nrsuite` imports it directly and auto-installs it on first run if missing:
+
+```python
+from espbridge import (
+    detect_backend, auto_detect_device, request_permission, launch_with_fd,
+    describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
+    init_uart_bridge, is_native_cdc, open_native_cdc_port,
+    find_cdc_control_interface, wrap_direct, wrap_fd,
+    ReceiverThread, Sender, Protocol,
+)
+```
+
+If you're vendoring NRSuite offline or on a device without pip network access, install it manually first:
+
+```bash
+pip install espbridge
 ```
 
 ---
