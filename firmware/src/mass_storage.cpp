@@ -1,12 +1,17 @@
 #include "mass_storage.h"
-#include <USB.h>
-#include "USBMSC.h"
 #include "FFat.h"
 #include "esp_partition.h"
 #include "wear_levelling.h"
 
+#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+#include <USB.h>
+#include "USBMSC.h"
+#endif
+
 namespace {
-    USBMSC msc;
+    #if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+        USBMSC msc;
+    #endif
     wl_handle_t wl_handle = WL_INVALID_HANDLE;
 
     int32_t onWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t bufsize) {
@@ -28,6 +33,8 @@ namespace {
 }
 
 // ── MSC mode (host sees a USB drive) ────────────────────────────────────
+#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+
 bool MassStorage::setup() {
 
     if (mscStarted) {
@@ -64,7 +71,7 @@ bool MassStorage::setup() {
 void MassStorage::setMediaPresent(bool present) {
     msc.mediaPresent(present);
 }
-
+#endif
 // ── File operations (normal firmware mode) ──────────────────────────────
 
 bool MassStorage::writeFile(const char* path, const String& content, bool append) {

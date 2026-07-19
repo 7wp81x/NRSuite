@@ -1,4 +1,8 @@
 #include "UsbHID.h"
+
+#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+
+
 #include "mass_storage.h"
 #include <Preferences.h>
 #include <USB.h>
@@ -257,3 +261,5 @@ void UsbHID::runScript(const String& script) {
 
     delay(200);
 }
+
+#endif // CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3

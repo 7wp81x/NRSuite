@@ -478,6 +478,135 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
             proto.sendResp(id, false, "mass storage not supported on this chip");
         #endif
     }
+    
+    else if (strcmp(cmd, "MSC_LIST") == 0) {
+        #if MSC_SUPPORTED
+            String listing;
+            if (!MassStorage::listFiles(listing)) {
+                proto.sendResp(id, false, "failed to list files");
+            } else {
+                uint64_t total = 0, used = 0, free = 0;
+                MassStorage::getSpace(total, used, free);
+
+                JsonDocument resp;
+                resp["ok"] = true;
+
+                // Parse "name\tsize\n..." into a files array so the client
+                // doesn't have to do its own string parsing.
+                JsonArray files = resp["files"].to<JsonArray>();
+                int start = 0;
+                while (start < listing.length()) {
+                    int lineEnd = listing.indexOf('\n', start);
+                    if (lineEnd == -1) break;
+                    String line = listing.substring(start, lineEnd);
+                    int tab = line.indexOf('\t');
+                    if (tab != -1) {
+                        JsonObject f = files.add<JsonObject>();
+                        f["name"] = line.substring(0, tab);
+                        f["size"] = line.substring(tab + 1).toInt();
+                    }
+                    start = lineEnd + 1;
+                }
+
+                resp["total"] = total;
+                resp["used"]  = used;
+                resp["free"]  = free;
+
+                String json; serializeJson(resp, json);
+                proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
+            }
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
+
+    else if (strcmp(cmd, "MSC_READ") == 0) {
+        #if MSC_SUPPORTED
+            const char* path = doc["args"]["path"] | "";
+            if (path[0] == '\0') {
+                proto.sendResp(id, false, "missing path");
+            } else {
+                String content;
+                if (!MassStorage::readFile(path, content)) {
+                    proto.sendResp(id, false, "failed to read file");
+                } else {
+                    JsonDocument resp;
+                    resp["ok"]      = true;
+                    resp["path"]    = path;
+                    resp["content"] = content;
+                    resp["size"]    = content.length();
+                    String json; serializeJson(resp, json);
+                    proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
+                }
+            }
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
+
+    else if (strcmp(cmd, "MSC_WRITE") == 0) {
+        #if MSC_SUPPORTED
+            const char* path    = doc["args"]["path"] | "";
+            const char* content = doc["args"]["content"] | "";
+            bool append         = doc["args"]["append"] | false;
+
+            if (path[0] == '\0') {
+                proto.sendResp(id, false, "missing path");
+            } else if (!MassStorage::writeFile(path, String(content), append)) {
+                proto.sendResp(id, false, "failed to write file");
+            } else {
+                proto.sendResp(id, true, append ? "appended" : "written");
+            }
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
+
+    else if (strcmp(cmd, "MSC_DELETE") == 0) {
+        #if MSC_SUPPORTED
+            const char* path = doc["args"]["path"] | "";
+            if (path[0] == '\0') {
+                proto.sendResp(id, false, "missing path");
+            } else if (!MassStorage::deleteFile(path)) {
+                proto.sendResp(id, false, "failed to delete file");
+            } else {
+                proto.sendResp(id, true, "deleted");
+            }
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
+
+    else if (strcmp(cmd, "MSC_SPACE") == 0) {
+        #if MSC_SUPPORTED
+            uint64_t total = 0, used = 0, free = 0;
+            if (!MassStorage::getSpace(total, used, free)) {
+                proto.sendResp(id, false, "failed to get space info");
+            } else {
+                JsonDocument resp;
+                resp["ok"]    = true;
+                resp["total"] = total;
+                resp["used"]  = used;
+                resp["free"]  = free;
+                String json; serializeJson(resp, json);
+                proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
+            }
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
+
+    else if (strcmp(cmd, "MSC_SETUP") == 0) {
+        #if MSC_SUPPORTED
+            if (!MassStorage::setup()) {
+                proto.sendResp(id, false, "failed to enter MSC mode");
+            } else {
+                proto.sendResp(id, true, "msc mode active");
+            }
+        #else
+            proto.sendResp(id, false, "storage not supported on this chip");
+        #endif
+    }
 
     // File upload to mass storage
     else if (strcmp(cmd, "SET_FILE_CHUNK") == 0) {
@@ -557,23 +686,25 @@ void sendHeartbeat() {
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 void setup() {
-    Keyboard.begin();
-    Preferences prefs;
-    prefs.begin("boot", false);
-    bool mscMode = prefs.getBool("msc_mode", false);
+    #if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+        Keyboard.begin();
+        Preferences prefs;
+        prefs.begin("boot", false);
+        bool mscMode = prefs.getBool("msc_mode", false);
 
-    if (mscMode) prefs.putBool("msc_mode", false);
+        if (mscMode) prefs.putBool("msc_mode", false);
 
 
-    prefs.end();
+        prefs.end();
 
-    #if (MSC_SUPPORTED || HID_SUPPORTED)
-    if (mscMode) {
-        MassStorage::setup();   // USB.begin() called fresh, nothing else has touched USB yet
-        while (true) delay(1000);
-    } else if(UsbHID::runIfArmed()) {
-        while (true) delay(1000);
-    }
+        #if (MSC_SUPPORTED || HID_SUPPORTED)
+        if (mscMode) {
+            MassStorage::setup();   // USB.begin() called fresh, nothing else has touched USB yet
+            while (true) delay(1000);
+        } else if(UsbHID::runIfArmed()) {
+            while (true) delay(1500);
+        }
+        #endif
     #endif
 
     Serial.setRxBufferSize(4096);
