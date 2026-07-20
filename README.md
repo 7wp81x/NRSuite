@@ -9,7 +9,7 @@ NRSuite bypasses Android's locked-down radio APIs by offloading the radio layer 
 </p>
 
 <p align="center">
-  <img src="docs/images/hardware.jpg" width="600" alt="ESP32-C3-SuperMini connected to Android phone via OTG cable">
+  <img src="docs/images/nrsuite1_nanoUART-ESP32S2.jpg" width="600" alt="ESP32-C3-SuperMini connected to Android phone via OTG cable">
 </p>
 
 > ⚠️ **Authorized use only.** Only use this tool on networks and devices you own or have explicit written permission to test. Unauthorized interception of network traffic is illegal in most jurisdictions.
