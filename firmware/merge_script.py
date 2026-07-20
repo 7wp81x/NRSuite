@@ -1,12 +1,19 @@
 Import("env")
 import os
+import shutil
 
-# Map PlatformIO environment name -> output firmware name
 NAME_MAP = {
     "esp32-devkit": "nrsuite-esp32-generic.bin",
     "esp32-c3":     "nrsuite-esp32c3.bin",
     "esp32-s3":     "nrsuite-esp32s3.bin",
     "esp32-s2":     "nrsuite-esp32s2.bin",
+}
+
+BETA_NAME_MAP = {
+    "esp32-devkit": "beta-nrsuite-esp32-generic.bin",
+    "esp32-c3":     "beta-nrsuite-esp32c3.bin",
+    "esp32-s3":     "beta-nrsuite-esp32s3.bin",
+    "esp32-s2":     "beta-nrsuite-esp32s2.bin",
 }
 
 # Bootloader load offset differs by chip family
@@ -29,15 +36,19 @@ def merge_bin_action(source, target, env):
 
     project_dir = env.subst("$PROJECT_DIR")
     release_dir = os.path.join(project_dir, "release")
+    beta_dir = os.path.join(release_dir, "Beta-release")
     os.makedirs(release_dir, exist_ok=True)
+    os.makedirs(beta_dir, exist_ok=True)
 
     out_name = NAME_MAP.get(pioenv, f"nrsuite-{pioenv}.bin")
+    beta_name = BETA_NAME_MAP.get(pioenv, f"beta-nrsuite-{pioenv}.bin")
+
     merged = os.path.join(release_dir, out_name)
+    merged_beta = os.path.join(beta_dir, beta_name)
 
     mcu = board.get("build.mcu", "esp32")
     boot_offset = BOOT_OFFSET.get(mcu, "0x0")
 
-    # Sanity: bootloader.bin must exist before we try to merge
     if not os.path.isfile(bootloader):
         print(f"[merge_script] WARNING: {bootloader} not found, skipping merge for {pioenv}")
         return
@@ -54,5 +65,12 @@ def merge_bin_action(source, target, env):
     result = env.Execute(cmd)
     if result != 0:
         print(f"[merge_script] ERROR: merge_bin failed for {pioenv} (exit {result})")
+        return
+
+    try:
+        shutil.copyfile(merged, merged_beta)
+        print(f"[merge_script] Copied  -> {merged_beta}")
+    except OSError as e:
+        print(f"[merge_script] ERROR: failed to copy beta binary for {pioenv}: {e}")
 
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", merge_bin_action)
