@@ -45,13 +45,14 @@ Checklist of implemented functionality — update this when adding/removing feat
 - [x] **USB Mass Storage** — expose onboard flash as a real USB drive to the host; list/read/write/delete files over the bridge without entering MSC mode
 - [x] **BadUSB** — run a DuckyScript payload over native USB HID, with optional simultaneous mass storage exposure
 - [x] **Heartbeat** — uptime + free heap reported every 5 seconds for health monitoring
-- [ ] Beacon broadcasting (beacon spam, custom/hidden SSIDs)
+- [x] **Beacon broadcasting** — beacon spam with custom/hidden SSIDs (up to 32), fixed channel, optional stable or random BSSIDs
+- [x] **Multi-device select** — `nrsuite devices` + `-d` / `--device` (path or index) when several boards are plugged in; auto-picks if only one is present
 - [ ] BLE scanning, advertising, device discovery, BLE spam
 - [ ] Hardware expansion — IR, NRF24, CC1101 modules
 
-> BLE HID requires a chip with a Bluetooth radio (C3, S3, or classic ESP32). ESP32-S2 is Wi-Fi only and does not support this feature — see [Hardware](docs/hardware.md).
+> BLE HID requires a chip with a Bluetooth radio (**C3, S3, or classic ESP32** — tested). **ESP32-S2** is supported and tested for WiFi / MSC / BadUSB but has **no BLE radio**, so BadBLE/keyboard are unavailable on S2 — see [Hardware](docs/hardware.md).
 
-> USB Mass Storage and BadUSB require a chip with **native USB-OTG** (S2, S3). File read/write/delete/list operations work on any chip via the bridge protocol regardless of USB-OTG support — only entering actual MSC/HID device mode needs it. ESP32-C3 and classic ESP32 devkits have no USB-OTG peripheral, so `masstorage start` and `badusb` are unavailable on those boards — see [Hardware](docs/hardware.md).
+> USB Mass Storage and BadUSB require a chip with **native USB-OTG** (**ESP32-S2 and ESP32-S3**, both tested). File read/write/delete/list operations work on any chip via the bridge protocol regardless of USB-OTG support — only entering actual MSC/HID device mode needs it. ESP32-C3 and classic ESP32 devkits have no USB-OTG peripheral, so `masstorage start` and `badusb` are unavailable on those boards — see [Hardware](docs/hardware.md).
 
 This checklist is kept up to date as things land, so it's the single source of truth for what's shipped vs. planned — no separate Roadmap page to drift out of sync.
 
@@ -101,7 +102,9 @@ Plug the ESP32 into your phone via OTG cable. On first run, Android shows a USB 
 
 ```bash
 chmod +x nrsuite
-./nrsuite scan
+./nrsuite scan                  # auto-detects the board
+./nrsuite devices               # list boards if more than one is plugged in
+./nrsuite -d 0 scan             # pick by index
 ```
 
 **Or use the automated installer:**
@@ -117,7 +120,7 @@ Full usage examples, protocol details, and hardware notes have moved into [`/doc
 
 | Doc | Covers |
 |---|---|
-| [Usage](docs/usage.md) | Full command reference — scan, sniff, deauth, portal, BLE HID, mass storage, BadUSB |
+| [Usage](docs/usage.md) | Full command reference — scan, sniff, deauth, beacon, portal, BLE HID, mass storage, BadUSB, device select (`-d`) |
 | [Hardware](docs/hardware.md) | Supported boards, chip capabilities, USB transport differences |
 | [Environments](docs/environments.md) | No-root Termux, rooted Termux, and Kali NetHunter setup |
 | [Comparison](docs/comparison.md) | NRSuite vs. NetHunter + external adapter |
