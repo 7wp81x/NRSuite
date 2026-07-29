@@ -4,6 +4,7 @@
 #include "BridgeProtocol.h"
 #include "sniffer.h"
 #include "portal.h"
+#include "beacon.h"
 #include "mbedtls/base64.h"
 #include "Preferences.h"
 #ifdef ENABLE_BLE_HID
@@ -36,6 +37,7 @@
 BridgeProtocol proto(Serial);
 Sniffer        sniffer;
 PortalManager  portal;
+BeaconSpammer  beacon;
 
 // ── IDF-level scan ───────────────────────────────────────────────────────────
 static volatile bool _scanDone = false;
@@ -98,8 +100,12 @@ static const char* authModeStr(wifi_auth_mode_t mode) {
     }
 }
 
+// Stop every radio/network subsystem before starting a new one.
+// Call this at the top of any CMD that touches Wi-Fi TX/RX.
 static void radioIdle() {
     sniffer.stop();
+    beacon.stop();
+    portal.stop();
     esp_wifi_set_promiscuous(false);
     vTaskDelay(pdMS_TO_TICKS(80));
 }
@@ -130,12 +136,21 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
             resp["channel"] = sniffer.channel();
         }
         resp["portal"]   = portal.isRunning();
+        resp["beacon"]   = beacon.active();
+        if (beacon.active()) {
+            BeaconStats bs = beacon.stats();
+            resp["beacon_ssids"] = bs.ssids;
+            resp["beacon_sent"]  = bs.sent;
+            resp["beacon_channel"] = bs.channel;
+        }
         String json; serializeJson(resp, json);
         proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
     }
 
     // ── START_SNIFF ──────────────────────────────────────────────────────
     else if (strcmp(cmd, "START_SNIFF") == 0) {
+        radioIdle();  // stop beacon / portal / prior sniff before starting
+
         const char* mode      = doc["args"]["mode"] | "fixed";
         bool        eapolOnly = doc["args"]["eapol_only"] | false;
         const char* bssidStr  = doc["args"]["bssid"] | "";
@@ -321,6 +336,8 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
 
     // ── CAPTIVE PORTAL ────────────────────────────────────────────────────
     else if (strcmp(cmd, "START_PORTAL") == 0) {
+        radioIdle();  // stop sniff / beacon / prior portal before starting
+
         const char* ssid = doc["args"]["ssid"] | "Home Network";
         uint8_t channel = doc["args"]["channel"] | 6;
         const char* bssidStr = doc["args"]["bssid"] | "";
@@ -664,6 +681,54 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
         #endif
     }
 
+    // ── BEACON SPAM ───────────────────────────────────────────────────────
+    else if (strcmp(cmd, "START_BEACON") == 0) {
+        radioIdle();  // stop sniff / portal / prior beacon before starting
+
+        const char* ssidsRaw = doc["args"]["ssids"] | "";
+        uint8_t  channel     = doc["args"]["channel"] | 1;
+        uint16_t intervalMs  = doc["args"]["interval_ms"] | 20;
+        bool randomize       = doc["args"]["random_bssid"] | true;
+        bool hidden          = doc["args"]["hidden"] | false;
+
+        if (ssidsRaw[0] == '\0') {
+            proto.sendResp(id, false, "missing ssids");
+        } else if (!beacon.start(String(ssidsRaw), channel, intervalMs, randomize, hidden)) {
+            proto.sendResp(id, false, "invalid channel or empty ssid list");
+        } else {
+            BeaconStats bs = beacon.stats();
+            JsonDocument resp;
+            resp["ok"]      = true;
+            resp["ssids"]   = bs.ssids;
+            resp["channel"] = bs.channel;
+            String json; serializeJson(resp, json);
+            proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
+        }
+    }
+
+    else if (strcmp(cmd, "STOP_BEACON") == 0) {
+        BeaconStats bs = beacon.stats();
+        beacon.stop();
+        JsonDocument resp;
+        resp["ok"]   = true;
+        resp["sent"] = bs.sent;
+        resp["ssids"] = bs.ssids;
+        String json; serializeJson(resp, json);
+        proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
+    }
+
+    else if (strcmp(cmd, "BEACON_STATUS") == 0) {
+        BeaconStats bs = beacon.stats();
+        JsonDocument resp;
+        resp["ok"]      = true;
+        resp["active"]  = beacon.active();
+        resp["ssids"]   = bs.ssids;
+        resp["sent"]    = bs.sent;
+        resp["channel"] = bs.channel;
+        String json; serializeJson(resp, json);
+        proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
+    }
+
     else {
         proto.sendResp(id, false, "unknown command");
     }
@@ -763,6 +828,7 @@ void setup() {
 
     sniffer.begin(proto);
     portal.begin(proto);
+    beacon.begin(proto);
 
 }
 
@@ -774,6 +840,7 @@ void loop() {
     sniffer.processQueue();
     sniffer.handleHop();
     portal.update();
+    beacon.update();
 
     static uint32_t lastRefresh = 0;
     if (millis() - lastRefresh > 2500) {

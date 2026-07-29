@@ -622,6 +622,132 @@ def do_deauth(fd: int = None, args=None):
     log("Deauth finished.", C.GREEN)
 
 
+# ====================== BEACON SPAM ======================
+
+def do_beacon(fd: int = None, args=None):
+    """Broadcast 802.11 beacons continuously until Ctrl+C."""
+    action = getattr(args, "beacon_action", "start") or "start"
+
+    _, rx, tx, proto = _setup_bridge(fd)
+    _drain_stale(rx)
+    _wait_for_ready(proto)
+    proto.start()
+
+    started = False
+    try:
+        if action == "stop":
+            resp = proto.send_cmd("STOP_BEACON", timeout=5)
+            if resp and resp.get("ok"):
+                log(f"Beacon spam stopped. Frames sent: {resp.get('sent', 0)}",
+                    C.GREEN, level="ok")
+            else:
+                log("Failed to stop beacon spam.", C.RED, level="err")
+            return
+
+        if action == "status":
+            resp = proto.send_cmd("BEACON_STATUS", timeout=5)
+            if resp and resp.get("ok"):
+                log(f"Active:  {resp.get('active')}", C.CYAN)
+                log(f"SSIDs:   {resp.get('ssids')}", C.CYAN)
+                log(f"Sent:    {resp.get('sent')}", C.CYAN)
+                log(f"Channel: {resp.get('channel')}", C.CYAN)
+            else:
+                log("Failed to get beacon status.", C.RED, level="err")
+            return
+
+        # --- start (runs continuously until Ctrl+C) ---
+        ssids = []
+        if getattr(args, "file", None):
+            if not os.path.exists(args.file):
+                log(f"SSID list file not found: {args.file}", C.RED, level="err")
+                return
+            with open(args.file, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        ssids.append(line)
+        if getattr(args, "ssid", None):
+            for s in args.ssid:
+                ssids.append(s)
+
+        if not ssids:
+            log("No SSIDs given. Use --ssid NAME (repeatable) or --file list.txt",
+                C.RED, level="err")
+            return
+
+        if len(ssids) > 32:
+            log(f"Truncating SSID list from {len(ssids)} to 32 (firmware max).",
+                C.YELLOW, level="warn")
+            ssids = ssids[:32]
+
+        ssids_payload = "\n".join(ssids)
+        channel = int(getattr(args, "channel", 6) or 6)
+        interval = int(getattr(args, "interval", 20) or 20)
+        random_bssid = not getattr(args, "stable_bssid", False)
+        hidden = bool(getattr(args, "hidden", False))
+
+        log(f"Starting beacon spam: {len(ssids)} SSID(s) on channel {channel}, "
+            f"interval {interval} ms", C.CYAN)
+        for s in ssids[:8]:
+            log(f"  • {s}", C.YELLOW)
+        if len(ssids) > 8:
+            log(f"  … and {len(ssids) - 8} more", C.YELLOW)
+
+        resp = proto.send_cmd("START_BEACON", {
+            "ssids": ssids_payload,
+            "channel": channel,
+            "interval_ms": interval,
+            "random_bssid": random_bssid,
+            "hidden": hidden,
+        }, timeout=10)
+
+        if not resp or not resp.get("ok"):
+            msg = resp.get("msg") if resp else "timed out"
+            log(f"Failed to start beacon spam: {msg}", C.RED, level="err")
+            return
+
+        started = True
+        log(f"Beacon spam running continuously ({resp.get('ssids')} SSIDs). "
+            f"Press Ctrl+C to stop.", C.GREEN, level="ok")
+
+        # Stay alive — firmware keeps transmitting in loop(); we just wait.
+        # Occasional status tick so the session doesn't look frozen.
+        last_log = 0
+        while True:
+            time.sleep(0.5)
+            now = time.time()
+            if now - last_log >= 5.0:
+                last_log = now
+                st = proto.send_cmd("BEACON_STATUS", timeout=3)
+                if st and st.get("ok"):
+                    log(f"  still running — sent={st.get('sent')} frames",
+                        C.MAGENTA)
+
+    except KeyboardInterrupt:
+        log("\nCtrl+C — stopping beacon spam...", C.YELLOW)
+    finally:
+        if started:
+            try:
+                stop = proto.send_cmd("STOP_BEACON", timeout=5)
+                if stop and stop.get("ok"):
+                    log(f"Stopped. Total frames sent: {stop.get('sent', 0)}",
+                        C.GREEN, level="ok")
+                else:
+                    log("Stop command failed (device may still be transmitting "
+                        "until reset).", C.YELLOW, level="warn")
+            except Exception:
+                pass
+        try:
+            proto.stop()
+        except Exception:
+            pass
+        try:
+            rx.stop()
+            rx.join(timeout=3)
+        except Exception:
+            pass
+
+
 # ====================== MASS STORAGE ======================
 
 def do_masstorage_start(fd: int = None, args=None):
@@ -1045,6 +1171,16 @@ def main():
     deauth_p.add_argument("--duration", type=int, default=0)
     deauth_p.add_argument("--interval", type=int, default=100)
 
+    # Beacon spam
+    beacon_p = subparsers.add_parser("beacon",help="Broadcast 802.11 beacons (beacon spam / custom SSIDs)")
+    beacon_p.add_argument("beacon_action", nargs="?", default="start", choices=["start", "stop", "status"], help="start (default) | stop | status")
+    beacon_p.add_argument("--ssid", action="append", default=[],help="SSID to advertise (repeat for multiple)")
+    beacon_p.add_argument("--file", help="Text file with one SSID per line (# comments allowed)")
+    beacon_p.add_argument("--channel", type=int, default=6, help="Channel 1-13 (default 6)")
+    beacon_p.add_argument("--interval", type=int, default=20,help="Milliseconds between consecutive beacon TX (default 20)")
+    beacon_p.add_argument("--stable-bssid", action="store_true",help="Derive BSSID from SSID hash instead of randomizing each run")
+    beacon_p.add_argument("--hidden", action="store_true",help="Advertise as hidden networks (SSID length 0 in the beacon)")
+
     portal_p = subparsers.add_parser("portal", help="Captive Portal")
     portal_p.add_argument("action", choices=["start", "stop", "status"])
     portal_p.add_argument("--ssid", default="Free WiFi")
@@ -1102,6 +1238,8 @@ def main():
             do_sniff(args=args)
         elif args.command == "deauth":
             do_deauth(args=args)
+        elif args.command == "beacon":
+            do_beacon(args=args)
         elif args.command == "portal": do_portal(args=args)
         elif args.command == "ble":
             if args.ble_action == "badble": do_ble_badble(args=args)
@@ -1118,6 +1256,7 @@ def main():
         if args.command == "scan":do_scan(fd=fd)
         elif args.command == "sniff":do_sniff(fd=fd, args=args)
         elif args.command == "deauth":do_deauth(fd=fd, args=args)
+        elif args.command == "beacon": do_beacon(fd=fd, args=args)
         elif args.command == "portal": do_portal(fd=fd, args=args)
         elif args.command == "ble":
             if args.ble_action == "badble": do_ble_badble(fd=fd, args=args)
