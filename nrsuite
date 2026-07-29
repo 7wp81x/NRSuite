@@ -6,7 +6,7 @@ try:
         detect_backend, auto_detect_device, request_permission, launch_with_fd,
         describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
         init_uart_bridge, is_native_cdc, open_native_cdc_port,
-        find_cdc_control_interface, wrap_direct, wrap_fd,
+        find_cdc_control_interface, wrap_direct, wrap_fd, list_usb_devices,
         ReceiverThread, Sender, Protocol,
     )
 except ImportError:
@@ -16,7 +16,7 @@ except ImportError:
         detect_backend, auto_detect_device, request_permission, launch_with_fd,
         describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
         init_uart_bridge, is_native_cdc, open_native_cdc_port,
-        find_cdc_control_interface, wrap_direct, wrap_fd,
+        find_cdc_control_interface, wrap_direct, wrap_fd, list_usb_devices,
         ReceiverThread, Sender, Protocol,
     )
 
@@ -176,9 +176,122 @@ def tail_log(proc):
         pass
 
 
-def bootstrap(subcommand: str, extra_args: list[str]) -> None:
+
+def _enumerate_usb_paths() -> list:
+    """Return list of USB device path strings (Termux) or synthetic labels (root)."""
+    paths = []
     try:
-        device_path = auto_detect_device()
+        paths = list(list_usb_devices() or [])
+    except Exception:
+        paths = []
+    if paths:
+        return paths
+    # Fallback: termux-usb -l
+    try:
+        out = subprocess.check_output(
+            ["termux-usb", "-l"], stderr=subprocess.STDOUT, timeout=8, text=True
+        )
+        import json as _json
+        data = _json.loads(out.strip() or "[]")
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, str):
+                    paths.append(item)
+                elif isinstance(item, dict):
+                    p = item.get("device") or item.get("path")
+                    if p:
+                        paths.append(p)
+    except Exception:
+        pass
+    return paths
+
+
+def resolve_device(spec: str | None = None) -> str:
+    """
+    Resolve a device specifier to a USB path.
+      None / empty  -> auto_detect_device() (first usable)
+      digit         -> index into enumerated list (0-based)
+      path / substr -> exact or unique substring match
+    """
+    paths = _enumerate_usb_paths()
+
+    if not spec:
+        if len(paths) == 1:
+            return paths[0]
+        if len(paths) > 1:
+            # Prefer auto_detect when multiple; it may apply VID:PID heuristics
+            try:
+                return auto_detect_device()
+            except Exception:
+                lines = "\n".join(f"  [{i}] {p}" for i, p in enumerate(paths))
+                raise RuntimeError(
+                    f"Multiple USB devices found — pick one with -d/--device:\n{lines}"
+                )
+        return auto_detect_device()
+
+    spec = str(spec).strip()
+
+    # Numeric index
+    if spec.isdigit():
+        idx = int(spec)
+        if not paths:
+            raise RuntimeError("No USB devices found to index.")
+        if idx < 0 or idx >= len(paths):
+            lines = "\n".join(f"  [{i}] {p}" for i, p in enumerate(paths))
+            raise RuntimeError(
+                f"Device index {idx} out of range.\n{lines}"
+            )
+        return paths[idx]
+
+    # Exact path
+    if paths and spec in paths:
+        return spec
+    if spec.startswith("/dev/"):
+        return spec  # trust explicit path even if list is stale
+
+    # Unique substring match
+    matches = [p for p in paths if spec in p]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        lines = "\n".join(f"  [{i}] {p}" for i, p in enumerate(matches))
+        raise RuntimeError(f"Ambiguous device spec {spec!r}:\n{lines}")
+
+    if paths:
+        lines = "\n".join(f"  [{i}] {p}" for i, p in enumerate(paths))
+        raise RuntimeError(f"No device matching {spec!r}.\n{lines}")
+    raise RuntimeError(f"No USB devices found (spec={spec!r}).")
+
+
+def do_list_devices():
+    """Print enumerated USB devices with indices for -d/--device."""
+    paths = _enumerate_usb_paths()
+    if not paths:
+        # Root: try describe via wrap_direct
+        try:
+            backend = detect_backend()
+        except Exception:
+            backend = "?"
+        if backend == "root":
+            try:
+                dev = wrap_direct()
+                print(f"[0] {describe_device(dev)}  (direct libusb)")
+                return
+            except Exception as e:
+                log(f"No USB device found: {e}", C.RED, level="err")
+                return
+        log("No USB devices found. Plug in the ESP32 via OTG and retry.", level="warn")
+        return
+    print(f"{C.CYAN}[*]{C.RESET} {len(paths)} device(s):")
+    for i, p in enumerate(paths):
+        mark = f"{C.GREEN}[{i}]{C.RESET}"
+        print(f"  {mark} {p}")
+    print(f"\n{C.GRAY}Use:  ./nrsuite -d 0 scan   or   ./nrsuite -d {paths[0]} scan{C.RESET}")
+
+
+def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = None) -> None:
+    try:
+        device_path = resolve_device(device_spec)
         print(f"\033[0;92m[+]\033[0m Found device: \033[0;92m{device_path}\033[0m", file=sys.stderr)
     except RuntimeError as e:
         print(f"\033[0;91m[!]\033[0m ERROR: {e}", file=sys.stderr)
@@ -1144,12 +1257,20 @@ def do_badusb(fd: int = None, args=None):
 # ====================== MAIN ======================
 def main():
     parser = argparse.ArgumentParser(description="NRSuite - ESP32 WiFi Tool")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "-d", "--device",
+        metavar="PATH|INDEX",
+        default=None,
+        help="USB device path or index when several are plugged in (see: nrsuite devices)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("scan", help="Scan nearby WiFi networks")
+    subparsers.add_parser("devices", help="List connected USB devices (for -d/--device)")
+    subparsers.add_parser("scan", parents=[common], help="Scan nearby WiFi networks")
 
     # Sniff
-    sniff_p = subparsers.add_parser("sniff", help="Packet sniffing")
+    sniff_p = subparsers.add_parser("sniff", parents=[common], help="Packet sniffing")
     sniff_p.add_argument("--channel", type=int, default=1)
     sniff_p.add_argument("--hop", action="store_true")
     sniff_p.add_argument("--interval", type=int, default=300)
@@ -1163,7 +1284,7 @@ def main():
     sniff_p.add_argument("--stream", action="store_true")
 
     # Pure Deauth
-    deauth_p = subparsers.add_parser("deauth", help="Send deauthentication frames")
+    deauth_p = subparsers.add_parser("deauth", parents=[common], help="Send deauthentication frames")
     deauth_p.add_argument("--bssid", required=True)
     deauth_p.add_argument("--channel", type=int, required=True)
     deauth_p.add_argument("--client", default="FF:FF:FF:FF:FF:FF")
@@ -1172,7 +1293,7 @@ def main():
     deauth_p.add_argument("--interval", type=int, default=100)
 
     # Beacon spam
-    beacon_p = subparsers.add_parser("beacon",help="Broadcast 802.11 beacons (beacon spam / custom SSIDs)")
+    beacon_p = subparsers.add_parser("beacon", parents=[common], help="Broadcast 802.11 beacons (beacon spam / custom SSIDs)")
     beacon_p.add_argument("beacon_action", nargs="?", default="start", choices=["start", "stop", "status"], help="start (default) | stop | status")
     beacon_p.add_argument("--ssid", action="append", default=[],help="SSID to advertise (repeat for multiple)")
     beacon_p.add_argument("--file", help="Text file with one SSID per line (# comments allowed)")
@@ -1181,7 +1302,7 @@ def main():
     beacon_p.add_argument("--stable-bssid", action="store_true",help="Derive BSSID from SSID hash instead of randomizing each run")
     beacon_p.add_argument("--hidden", action="store_true",help="Advertise as hidden networks (SSID length 0 in the beacon)")
 
-    portal_p = subparsers.add_parser("portal", help="Captive Portal")
+    portal_p = subparsers.add_parser("portal", parents=[common], help="Captive Portal")
     portal_p.add_argument("action", choices=["start", "stop", "status"])
     portal_p.add_argument("--ssid", default="Free WiFi")
     portal_p.add_argument("--channel", type=int, default=6)
@@ -1189,7 +1310,7 @@ def main():
     portal_p.add_argument("--file", help="HTML file to upload (for start or html action)")
 
     # BLE HID
-    ble_p = subparsers.add_parser("ble", help="BLE HID keyboard / DuckyScript injection")
+    ble_p = subparsers.add_parser("ble", parents=[common], help="BLE HID keyboard / DuckyScript injection")
     ble_sub = ble_p.add_subparsers(dest="ble_action", required=True)
 
     badble_p = ble_sub.add_parser("badble", help="Run a DuckyScript payload over BLE")
@@ -1204,7 +1325,7 @@ def main():
     keyboard_p.add_argument("--pair-timeout", type=int, default=60, help="Seconds to wait for pairing")
     keyboard_p.add_argument("--keep-alive", action="store_true", help="Keep BLE advertising after session ends")
 
-    masstorage_p = subparsers.add_parser("masstorage", help="Mass storage operations")
+    masstorage_p = subparsers.add_parser("masstorage", parents=[common], help="Mass storage operations")
     masstorage_sub = masstorage_p.add_subparsers(dest="msc_action", required=True)
     msc_start_p = masstorage_sub.add_parser("start", help="Enter USB mass storage mode")
     msc_files_p = masstorage_sub.add_parser("files", help="List files without entering MSC mode")
@@ -1215,7 +1336,7 @@ def main():
     masstorage_p.set_defaults(func=do_masstorage)
     
     
-    badusb_p = subparsers.add_parser("badusb", help="USB BadUSB for supported devices.")
+    badusb_p = subparsers.add_parser("badusb", parents=[common], help="USB BadUSB for supported devices.")
     badusb_p.add_argument("--payload", required=True, help="Path to DuckyScript .txt file")
     badusb_p.add_argument("--masstorage", action="store_true", help="Enable also mass storage mode")
     
@@ -1224,14 +1345,24 @@ def main():
     if not os.environ.get("NRSUITE_CHILD"):
         banner()
 
+    if args.command == "devices":
+        do_list_devices()
+        return
+
     try:
         backend = detect_backend()
     except RuntimeError as e:
         print(f"\033[0;91m[!]\033[0m {e}", file=sys.stderr)
         sys.exit(1)
 
+    device_spec = getattr(args, "device", None) or os.environ.get("NRSUITE_DEVICE")
+
     fd_str = os.environ.get("TERMUX_USB_FD")
     if backend == "root":
+        # Root path: currently opens first matching device via wrap_direct().
+        # --device is recorded for future multi-device root selection.
+        if device_spec:
+            log(f"Device selector: {device_spec} (root backend uses first matching libusb device)", C.YELLOW)
         if args.command == "scan":
             do_scan()
         elif args.command == "sniff":
@@ -1250,7 +1381,26 @@ def main():
             do_badusb(args=args)
     elif fd_str is None:
         print("\033[0;93m[*]\033[0m Backend: termux-api (no-root)", file=sys.stderr)
-        bootstrap(args.command, sys.argv[2:])
+        # Re-invoke without consuming --device in the child (FD is already bound).
+        extra = [a for a in sys.argv[2:] if a not in ("-d", "--device") and not (
+            # drop the value that followed -d/--device
+            False
+        )]
+        # Cleaner: rebuild extra from args without device flag for child
+        # Child only needs the subcommand argv; strip -d/--device and its value.
+        extra = []
+        skip_next = False
+        for a in sys.argv[2:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if a in ("-d", "--device"):
+                skip_next = True
+                continue
+            if a.startswith("--device="):
+                continue
+            extra.append(a)
+        bootstrap(args.command, extra, device_spec=device_spec)
     else:
         fd = int(fd_str)
         if args.command == "scan":do_scan(fd=fd)
