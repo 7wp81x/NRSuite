@@ -7,6 +7,7 @@ nrsuite/
 │   ├── src/
 │   │   ├── main.cpp              # Arduino entry point, CMD dispatcher
 │   │   ├── sniffer.cpp / .h      # Promiscuous capture, radiotap builder
+│   │   ├── beacon.cpp / .h       # Beacon spam (custom/hidden SSIDs, up to 32)
 │   │   ├── ble_hid.cpp / .h      # BLE HID keyboard (BadBLE / realtime), C3/S3/devkit only
 │   │   ├── mass_storage.cpp / .h # USB mass storage + file ops, MSC mode requires S2/S3
 │   │   ├── UsbHID.cpp / .h       # Native USB HID keyboard (BadUSB), S2/S3 only
@@ -23,7 +24,7 @@ USB/bridge-protocol plumbing (`protocol.py`, `receiver.py`, `sender.py`, `usb_de
 
 ```python
 from espbridge import (
-    detect_backend, auto_detect_device, request_permission, launch_with_fd,
+    detect_backend, auto_detect_device, list_usb_devices, request_permission, launch_with_fd,
     describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
     init_uart_bridge, is_native_cdc, open_native_cdc_port,
     find_cdc_control_interface, wrap_direct, wrap_fd,
