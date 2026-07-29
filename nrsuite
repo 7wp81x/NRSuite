@@ -1256,6 +1256,9 @@ def do_badusb(fd: int = None, args=None):
 
 # ====================== MAIN ======================
 def main():
+    parser = argparse.ArgumentParser(description="NRSuite - A wireless toolkit without root.")
+
+    # Used on the TOP-LEVEL parser: has the real default.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "-d", "--device",
@@ -1264,14 +1267,22 @@ def main():
         help="USB device path or index when several are plugged in (see: nrsuite devices)",
     )
 
-    parser = argparse.ArgumentParser(
-        description="NRSuite - A wireless toolkit without root.",
-        parents=[common],
+    # Used on SUBPARSERS: no default, so it doesn't clobber the top-level value
+    # unless the user actually passes -d after the subcommand.
+    common_sub = argparse.ArgumentParser(add_help=False)
+    common_sub.add_argument(
+        "-d", "--device",
+        metavar="PATH|INDEX",
+        default=argparse.SUPPRESS,
+        help="USB device path or index when several are plugged in (see: nrsuite devices)",
     )
+
+    # give the top-level parser -d too
+    parser = argparse.ArgumentParser(description="NRSuite - A wireless toolkit without root.", parents=[common])
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("devices", help="List connected USB devices (for -d/--device)")
-    subparsers.add_parser("scan", parents=[common], help="Scan nearby WiFi networks")
+    subparsers.add_parser("scan", parents=[common_sub], help="Scan nearby WiFi networks")
 
     # Sniff
     sniff_p = subparsers.add_parser("sniff", parents=[common], help="Packet sniffing")
