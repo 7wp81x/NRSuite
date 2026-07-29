@@ -1,6 +1,17 @@
 # Usage
 
-All commands follow the same pattern — the script detects the USB device, requests permission via `termux-usb`, and re-invokes itself with the granted file descriptor. Wi-Fi and BLE HID are implemented so far; commands below are all `nrsuite <module-style subcommands>` under one CLI, so future modules (`ir`, ...) slot in the same way.
+All commands follow the same pattern — the script detects the USB device, requests permission via `termux-usb`, and re-invokes itself with the granted file descriptor. Commands are `nrsuite <subcommand>` modules under one CLI (scan, sniff, deauth, beacon, portal, ble, masstorage, badusb). Future modules (`ir`, …) slot in the same way.
+
+### Board support (quick reference)
+
+| Feature | C3 | S3 | S2 | Classic ESP32 |
+|---|---|---|---|---|
+| WiFi scan / sniff / deauth / beacon / portal | ✅ | ✅ | ✅ | ✅ |
+| BLE HID (BadBLE / keyboard) | ✅ | ✅ | ❌ (no BLE radio) | ✅ |
+| Mass storage `start` / BadUSB | ❌ (no USB-OTG) | ✅ | ✅ | ❌ (no USB-OTG) |
+| Mass storage `files` / `delete` / `free` | ✅ | ✅ | ✅ | ✅ |
+
+ESP32-S2 is **supported and tested** for WiFi, USB mass storage, and BadUSB over native USB-OTG. See [Hardware](hardware.md) for details.
 
 ## Scan nearby networks
 
@@ -91,6 +102,29 @@ Sends 15 deauth frames to disconnect clients on the target BSSID. To capture the
 
 > ⚠️ Only use this on your own network or with explicit written permission from the network owner.
 
+## Beacon spam
+
+Broadcast 802.11 beacon frames for one or more SSIDs on a fixed channel. Useful for testing client discovery behavior and RF environment awareness.
+
+```bash
+# Inline SSIDs (repeat --ssid)
+./nrsuite beacon start --ssid "CoffeeShop" --ssid "Airport_Free" --channel 6
+
+# From a text file (one SSID per line, # comments allowed)
+./nrsuite beacon start --file ssids.txt --channel 11 --interval 15
+
+# Hidden networks + stable BSSIDs (derived from SSID hash)
+./nrsuite beacon start --ssid "HiddenNet" --hidden --stable-bssid --channel 1
+
+# Query / stop
+./nrsuite beacon status
+./nrsuite beacon stop
+```
+
+Up to 32 SSIDs are accepted. Default TX interval is 20 ms between consecutive beacons (round-robin across the list). Press Ctrl+C while running to stop cleanly.
+
+> ⚠️ Flooding the air with fake APs can disrupt nearby users and is illegal without authorization. Only use on spectrum/networks you own or have explicit written permission to test.
+
 ## Captive portal / AP mode
 
 ```bash
@@ -110,7 +144,7 @@ Sends 15 deauth frames to disconnect clients on the target BSSID. To capture the
 
 ## BLE HID (BadBLE / keyboard)
 
-> Requires a board with a Bluetooth radio — C3, S3, or classic ESP32 devkit. Not available on ESP32-S2 (WiFi-only silicon).
+> Requires a board with a Bluetooth radio — **C3, S3, or classic ESP32** (tested). **Not available on ESP32-S2** (no BLE radio; S2 is otherwise fully supported for WiFi / MSC / BadUSB).
 
 ```bash
 # Run a DuckyScript payload over BLE once a host pairs
@@ -127,7 +161,7 @@ Sends 15 deauth frames to disconnect clients on the target BSSID. To capture the
 
 ## USB Mass Storage
 
-> `masstorage start` and `badusb` require a chip with native USB-OTG (S2, S3). `files`/`delete`/`free` work on any chip over the bridge protocol. See [Hardware](hardware.md).
+> `masstorage start` and `badusb` require **native USB-OTG** — **ESP32-S2 and ESP32-S3** (both tested). `files` / `delete` / `free` work on **any** chip over the bridge. See [Hardware](hardware.md).
 
 ```bash
 # Enter USB mass storage mode — host sees the ESP32 as a USB drive
@@ -147,7 +181,7 @@ Sends 15 deauth frames to disconnect clients on the target BSSID. To capture the
 
 ## BadUSB
 
-> Requires a chip with native USB-OTG (S2, S3). Not available on C3 or classic ESP32 devkit — see [Hardware](hardware.md).
+> Requires **native USB-OTG** — **ESP32-S2 and ESP32-S3** (tested). Not available on C3 or classic ESP32 (no USB-OTG) — see [Hardware](hardware.md).
 
 ```bash
 # Run a DuckyScript payload over native USB HID
