@@ -1256,13 +1256,17 @@ def do_badusb(fd: int = None, args=None):
 
 # ====================== MAIN ======================
 def main():
-    parser = argparse.ArgumentParser(description="NRSuite - ESP32 WiFi Tool")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "-d", "--device",
         metavar="PATH|INDEX",
         default=None,
         help="USB device path or index when several are plugged in (see: nrsuite devices)",
+    )
+
+    parser = argparse.ArgumentParser(
+        description="NRSuite - A wireless toolkit without root.",
+        parents=[common],
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
