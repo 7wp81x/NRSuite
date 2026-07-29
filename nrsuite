@@ -407,14 +407,14 @@ def do_scan(fd: int = None):
     if resp and resp.get("ok"):
         status_str = "OK"
         msg_str = resp.get("msg", "wireless network scan initialized")
-        log(f"ESP32-S3: {status_str}, {msg_str}", C.YELLOW)
+        log(f"ESP32: {status_str}, {msg_str}", C.YELLOW)
     elif resp is None:
         log("SCAN_WIFI command timed out — no response from ESP32 "
             "(try unplugging and re-plugging, then run again)", C.RED, level="err")
     else:
         status_str = "FAILED"
         msg_str = resp.get("msg", "internal radio transceiver scanning failure")
-        log(f"ESP32-S3: {status_str}, {msg_str}", C.RED, level="err")
+        log(f"ESP32: {status_str}, {msg_str}", C.RED, level="err")
 
     time.sleep(1)
     proto.stop()
@@ -1414,25 +1414,7 @@ def main():
             do_badusb(args=args)
     elif fd_str is None:
         print("\033[0;93m[*]\033[0m Backend: termux-api (no-root)", file=sys.stderr)
-        # Re-invoke without consuming --device in the child (FD is already bound).
-        extra = [a for a in sys.argv[2:] if a not in ("-d", "--device") and not (
-            # drop the value that followed -d/--device
-            False
-        )]
-        # Cleaner: rebuild extra from args without device flag for child
-        # Child only needs the subcommand argv; strip -d/--device and its value.
-        extra = []
-        skip_next = False
-        for a in sys.argv[2:]:
-            if skip_next:
-                skip_next = False
-                continue
-            if a in ("-d", "--device"):
-                skip_next = True
-                continue
-            if a.startswith("--device="):
-                continue
-            extra.append(a)
+        extra = argv_rest[1:]
         bootstrap(args.command, extra, device_spec=device_spec)
     else:
         fd = int(fd_str)
