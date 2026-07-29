@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NRSuite — Wireless research toolkit for Termux</title>
-<meta name="description" content="Turn a $3–5 ESP32 into a wireless research toolkit for Termux — no root required. Wi-Fi monitor mode, packet capture, and injection today, with BLE and IR modules coming next.">
+<meta name="description" content="Turn a $3–5 ESP32 into a wireless research toolkit for Termux — no root required. Wi-Fi scan, capture, deauth, beacon spam, captive portal, BLE HID, BadUSB, and mass storage — on stock Android.">
 <meta property="og:title" content="NRSuite — Wireless research toolkit for Termux, no root required">
 <meta property="og:description" content="Turn a $3–5 ESP32 into a wireless research toolkit for Termux. Full Wi-Fi monitor mode and injection today — no root, no custom ROM — with more radio modules on the way.">
 <meta property="og:type" content="website">
@@ -766,8 +766,8 @@
     </h1>
     <p class="hero-sub">
       NRSuite turns a <b>$3 ESP32</b> into a wireless research toolkit for Termux.
-      Full Wi-Fi monitor mode and injection is implemented today, with BLE and
-      IR modules coming next — no rooted phone, no custom kernel, no expensive hardware.
+      Wi-Fi capture and injection, beacon spam, captive portal, BLE HID, BadUSB, and
+      mass storage — no rooted phone, no custom kernel, no expensive hardware.
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get started</a>
@@ -812,7 +812,7 @@
 <section class="section" id="features">
   <p class="section-label">Capabilities</p>
   <h2 class="section-title">What it does today</h2>
-  <p class="section-body">The ESP32 handles everything at the radio layer, and the firmware and bridge protocol are modular — new radio backends register their own commands without touching the transport layer. Wi-Fi is the first module, fully implemented and tested. Termux talks to it over USB CDC — no root, no kernel modules, no custom ROM required.</p>
+  <p class="section-body">The ESP32 handles everything at the radio layer. The firmware and bridge protocol are modular — new backends register their own commands without touching the transport. Termux talks over USB CDC — no root, no kernel modules, no custom ROM.</p>
 
   <div class="features-grid">
     <div class="feature">
@@ -833,7 +833,32 @@
     <div class="feature">
       <span class="feature-tag">deauth</span>
       <div class="feature-title">Deauth + capture</div>
-      <div class="feature-desc">Send deauthentication frames to trigger a reconnect, then capture the EAPOL handshake simultaneously.</div>
+      <div class="feature-desc">Send deauthentication frames standalone, or combined with sniffing to trigger and capture a handshake.</div>
+    </div>
+    <div class="feature">
+      <span class="feature-tag">beacon</span>
+      <div class="feature-title">Beacon broadcasting</div>
+      <div class="feature-desc">Beacon spam with custom or hidden SSIDs (up to 32), fixed channel, optional stable or random BSSIDs. Runs until Ctrl+C.</div>
+    </div>
+    <div class="feature">
+      <span class="feature-tag">portal</span>
+      <div class="feature-title">Captive portal / AP mode</div>
+      <div class="feature-desc">Start/stop/status, custom SSID and channel, HTML upload, optional auto EAPOL capture against a target BSSID.</div>
+    </div>
+    <div class="feature">
+      <span class="feature-tag">ble</span>
+      <div class="feature-title">BLE HID (BadBLE + keyboard)</div>
+      <div class="feature-desc">Advertise as a BLE keyboard, run DuckyScript payloads, or type live keystrokes from Termux to a paired host.</div>
+    </div>
+    <div class="feature">
+      <span class="feature-tag">usb</span>
+      <div class="feature-title">Mass storage + BadUSB</div>
+      <div class="feature-desc">Expose onboard flash as a USB drive, or arm a DuckyScript payload over native USB HID (S2/S3 USB-OTG).</div>
+    </div>
+    <div class="feature">
+      <span class="feature-tag">device</span>
+      <div class="feature-title">Multi-device select</div>
+      <div class="feature-desc"><code style="font-family:JetBrains Mono,monospace;font-size:0.85em">nrsuite devices</code> lists boards; <code style="font-family:JetBrains Mono,monospace;font-size:0.85em">-d</code> picks by index or path. Auto-detects when only one is plugged in.</div>
     </div>
     <div class="feature">
       <span class="feature-tag">live</span>
@@ -843,7 +868,7 @@
     <div class="feature">
       <span class="feature-tag">protocol</span>
       <div class="feature-title">Modular bridge protocol</div>
-      <div class="feature-desc">Compact framed protocol with sliding-window flow control over USB CDC bulk transfer — built as shared transport for every module, not just Wi-Fi.</div>
+      <div class="feature-desc">Compact framed protocol with flow control over USB CDC bulk transfer — shared transport for every module.</div>
     </div>
   </div>
 </section>
@@ -899,7 +924,10 @@
 
 <span class="cm"># Make executable and scan</span>
 <span class="kw">chmod</span> +x nrsuite
-./nrsuite scan</div>
+./nrsuite scan
+<span class="cm"># Multiple boards? List and pick:</span>
+./nrsuite devices
+./nrsuite -d 0 scan</div>
 
       <p style="margin-top:1rem;font-size:0.78rem;color:var(--muted)">
         Or use the automated installer:<br>
@@ -913,7 +941,7 @@
 <section class="section" id="hardware">
   <p class="section-label">Hardware</p>
   <h2 class="section-title">What you need</h2>
-  <p class="section-body">All supported ESP32 variants use native USB CDC — no external USB-UART bridge chip required. They appear as <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.85em">303A:xxxx</code> on Android.</p>
+  <p class="section-body">C3 / S3 / S2 use native USB (CDC or OTG) and appear as <code style="font-family:JetBrains Mono,monospace;color:var(--accent);font-size:0.85em">303A:xxxx</code>. Classic ESP32 devkits work via an external USB-UART bridge (CP2102/CH340/…).</p>
 
   <div class="hw-grid">
     <div class="hw-card">
@@ -931,10 +959,10 @@
       </div>
     </div>
     <div class="hw-card">
-      <span class="hw-status untested">Untested</span>
+      <span class="hw-status tested">Tested</span>
       <div>
         <div class="hw-name">ESP32-S2</div>
-        <div class="hw-desc">Single-core, native USB CDC, lower cost. VID:PID 303A:0002. Should work with minor platformio.ini adjustments.</div>
+        <div class="hw-desc">Single-core, native USB-OTG (VID:PID 303A:0002). WiFi, mass storage, and BadUSB tested. No BLE radio — BadBLE/keyboard unavailable on this chip.</div>
       </div>
     </div>
     <div class="hw-card">
@@ -1007,13 +1035,15 @@
 <section class="section" id="roadmap">
   <p class="section-label">Roadmap</p>
   <h2 class="section-title">What's next</h2>
-  <p class="section-body">Wi-Fi is the first module, and AP mode has since shipped. NRSuite's CMD dispatcher and bridge protocol are built to grow into a full wireless toolkit — BLE is next up, followed by IR.</p>
+  <p class="section-body">Wi-Fi, portal, beacon spam, BLE HID, BadUSB, and mass storage have shipped. The CMD dispatcher and bridge protocol keep growing — BLE scan/spam and hardware add-ons are next.</p>
 
   <div class="roadmap-list">
     <div class="roadmap-item done"><span class="roadmap-check done"></span><span class="roadmap-text">AP Mode — captive portal support</span><span class="roadmap-tag shipped">Shipped</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Beacon Broadcasting — beacon spam, custom SSIDs, hidden SSIDs</span></div>
+    <div class="roadmap-item done"><span class="roadmap-check done"></span><span class="roadmap-text">Beacon Broadcasting — custom / hidden SSIDs, continuous TX</span><span class="roadmap-tag shipped">Shipped</span></div>
+    <div class="roadmap-item done"><span class="roadmap-check done"></span><span class="roadmap-text">BLE HID — BadBLE DuckyScript + live keyboard</span><span class="roadmap-tag shipped">Shipped</span></div>
+    <div class="roadmap-item done"><span class="roadmap-check done"></span><span class="roadmap-text">USB Mass Storage + BadUSB (S2 / S3)</span><span class="roadmap-tag shipped">Shipped</span></div>
+    <div class="roadmap-item done"><span class="roadmap-check done"></span><span class="roadmap-text">Multi-device select — devices list + -d / --device</span><span class="roadmap-tag shipped">Shipped</span></div>
     <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Bluetooth — BLE scanning, advertising, device discovery, BLE spam</span><span class="roadmap-tag next">Next</span></div>
-    <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">HID Emulation — BLE BadUSB, keyboard injection</span></div>
     <div class="roadmap-item"><span class="roadmap-check"></span><span class="roadmap-text">Hardware expansion — IR, NRF24, CC1101 modules</span></div>
   </div>
 </section>
