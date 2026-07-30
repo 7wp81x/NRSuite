@@ -82,7 +82,7 @@ cd NRSuite
 
 ### 3. Flash the firmware with nrflash
 
-Pre-built binaries are on the [Releases](https://github.com/7wp81x/nrsuite/releases) page. [`nrflash`](https://github.com/7wp81x/Termux-ESP-Flasher) is a Termux-native, no-root flasher, no pyserial required. it works entirely on-device.
+Pre-built binaries are on the [Releases](https://github.com/7wp81x/NRSuite/releases) page. [`nrflash`](https://github.com/7wp81x/Termux-ESP-Flasher) is a Termux-native, no-root flasher, no pyserial required. it works entirely on-device.
 
 ```bash
 pip3 install nrflash
