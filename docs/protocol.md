@@ -13,6 +13,7 @@ NRSuite uses a compact binary framing protocol over the serial link (native USB 
 | EVENT | `0x03` | ESP32 → Termux | JSON async event (scan results, heartbeat) |
 | PCAP | `0x04` | ESP32 → Termux | Raw binary: radiotap header + 802.11 frame |
 | ACK | `0x05` | Termux → ESP32 | JSON `{"chunk": N}` — flow control |
+| HTML | `0x06` | Termux → ESP32 | Chunked raw payload upload — used for the captive portal's custom HTML page |
 
 PCAP frames use sliding-window flow control: the ESP32 buffers up to `SNIFF_MAX_INFLIGHT` (default 4) unacknowledged frames before pausing.
 
