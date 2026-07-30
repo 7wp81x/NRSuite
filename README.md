@@ -5,11 +5,11 @@
 NRSuite bypasses Android's locked-down radio APIs by offloading the radio layer to an ESP32 over USB OTG, turning a stock, unrooted Android phone into a wireless research toolkit. See [Features](#features) for exactly what's implemented today. The firmware and bridge protocol are modular by design — new radio backends and capabilities register their own CMDs without touching the transport layer, so the toolkit keeps growing without becoming a single-purpose tool.
 
 <p align="center">
-  <img src="docs/images/architecture_bw.jpg" width="700" alt="Architecture diagram">
+  <img src="docs/images/nrsuite1_nanoUART-ESP32S2.jpg" width="600" alt="ESP32-C3-SuperMini connected to Android phone via OTG cable">
 </p>
 
 <p align="center">
-  <img src="docs/images/nrsuite1_nanoUART-ESP32S2.jpg" width="600" alt="ESP32-C3-SuperMini connected to Android phone via OTG cable">
+  <img src="docs/images/architecture_bw.jpg" width="700" alt="Architecture diagram">
 </p>
 
 > ⚠️ **Authorized use only.** Only use this tool on networks and devices you own or have explicit written permission to test. Unauthorized interception of network traffic is illegal in most jurisdictions.
