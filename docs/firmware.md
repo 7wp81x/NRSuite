@@ -61,7 +61,7 @@ pio run -e esp32-c3 --target upload && pio device monitor
 
 ## Flashing pre-built binaries
 
-Pre-built `.bin` files are on the [Releases](https://github.com/7wp81x/nrsuite/releases) page.
+Pre-built `.bin` files are on the [Releases](https://github.com/7wp81x/NRSuite/releases) page.
 
 ### From a PC / laptop
 
