@@ -330,20 +330,20 @@ def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = 
 
 
 # ====================== HELPERS ======================
-def _setup_bridge(fd=None):
-    
+def _setup_bridge(fd=None, reset=False):
     if fd is None:
         log("Backend: \033[0;92mroot (direct libusb)\033[0m", C.GREEN)
         device = wrap_direct()
     else:
         device = wrap_fd(fd)
 
-    log("Starting bridge, Please wait...", C.GREEN, level="ok")
+    log("Starting bridge, please wait...", C.GREEN, level="ok")
+
     ep_in, ep_out, intf = get_cdc_endpoints(device)
     claim_device(device, intf, fd_wrapped=(fd is not None))
-    init_uart_bridge(device)
     reset_endpoint_toggles(device, ep_in, ep_out)
 
+    init_uart_bridge(device, reset=reset)
     if is_native_cdc(device):
         ctrl_intf = find_cdc_control_interface(device, intf)
         if ctrl_intf != intf:
@@ -353,10 +353,11 @@ def _setup_bridge(fd=None):
 
     rx = ReceiverThread(device, ep_in, log_func=log)
     rx.start()
+    rx.drain_stale(duration=0.5)
+
     tx = Sender(device, ep_out, log_func=log)
     proto = Protocol(tx, rx)
     proto.log = lambda x: None
-
     return device, rx, tx, proto
 
 def _drain_stale(rx):
