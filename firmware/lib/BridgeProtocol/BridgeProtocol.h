@@ -1,21 +1,9 @@
 #pragma once
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "ProtocolSpec.h"
 
-// ── Frame constants ───────────────────────────────────────────────────────────
-#define PROTO_MAGIC_0   0xAD
-#define PROTO_MAGIC_1   0xDE
-#define PROTO_HEADER_SZ 8       // 2 magic + 1 type + 1 id + 4 length
-#define PROTO_MAX_CHUNK 1024
 #define PROTO_RX_BUF_SIZE   (PROTO_MAX_CHUNK + PROTO_HEADER_SZ + 64)
-
-#define TYPE_CMD    0x01
-#define TYPE_RESP   0x02
-#define TYPE_EVENT  0x03
-#define TYPE_PCAP   0x04
-#define TYPE_ACK    0x05
-#define TYPE_HTML   0x06
-
 
 // ── Parsed frame ─────────────────────────────────────────────────────────────
 struct ProtoFrame {
