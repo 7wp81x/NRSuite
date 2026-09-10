@@ -22,15 +22,13 @@ void BridgeProtocol::update() {
 bool BridgeProtocol::_tryParse() {
     if (_bufLen < PROTO_HEADER_SZ) return false;
 
-    if (_buf[0] != PROTO_MAGIC_0 || _buf[1] != PROTO_MAGIC_1) {
+    uint8_t  ptype = 0;
+    uint8_t  pid   = 0;
+    uint32_t len   = 0;
+    if (!protoDecodeHeader(_buf, _bufLen, ptype, pid, len)) {
         _resync();
         return false;
     }
-
-    uint8_t  ptype = _buf[2];
-    uint8_t  pid   = _buf[3];
-    uint32_t len;
-    memcpy(&len, _buf + 4, 4);  // little-endian
 
     if (len > PROTO_MAX_CHUNK) {
         _oversizedFrames++;
