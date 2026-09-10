@@ -43,6 +43,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install platformio
 
+      - name: Run host-side Python tests
+        run: |
+          python -m unittest discover -s tests -v
+
       - name: Build all firmware environments
         working-directory: firmware
         run: |
