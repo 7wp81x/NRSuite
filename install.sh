@@ -82,16 +82,16 @@ if [ "$IS_TERMUX" -eq 1 ]; then
     fi
 fi
 
-if [ ! -f "nrsuite" ]; then
+if [ ! -f "nrsuite" ] || [ ! -d "nrsuite_lib" ]; then
     echo -e "${BLUE}[*] Fetching NRSuite source...${NC}"
-    git clone https://github.com/7wp81x/NRSuite.git
+    git clone https://github.com/7wp81x/NRSuite.git || exit 1
     cd NRSuite || exit 1
 fi
 
-if [ -f "nrsuite" ]; then
+if [ -f "nrsuite" ] && [ -d "nrsuite_lib" ]; then
     chmod +x nrsuite
 else
-    echo -e "${RED}[!] Error: Script infrastructure layout missing.${NC}"
+    echo -e "${RED}[!] Error: Script infrastructure layout missing (need nrsuite + nrsuite_lib).${NC}"
     exit 1
 fi
 

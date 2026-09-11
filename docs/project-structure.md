@@ -1,7 +1,33 @@
 # Project Structure
 
-```
+```text
 nrsuite/
+├── nrsuite                       # Thin executable launcher (chmod +x, run as ./nrsuite)
+├── nrsuite_lib/
+│   ├── cli.py                    # argparse construction + backend dispatch
+│   ├── config.py                 # paths, protocol constants, storage init
+│   ├── ui.py                     # colors, logging, banner, signal bars
+│   ├── espbridge_compat.py       # external espbridge import/dependency shim
+│   ├── devices.py                # USB enumeration/selection + Termux bootstrap
+│   ├── bridge.py                 # bridge setup/drain/ready helpers
+│   ├── eapol.py                  # pure EAPOL / 4-way-handshake parsing
+│   ├── duckyscript.py            # pure DuckyScript helpers
+│   └── commands/
+│       ├── scan.py
+│       ├── sniff.py
+│       ├── deauth.py
+│       ├── beacon.py
+│       ├── portal.py
+│       ├── ble.py
+│       ├── storage.py
+│       └── badusb.py
+├── tests/                        # host-side unittest coverage
+│   ├── test_cli.py
+│   ├── test_commands_import.py
+│   ├── test_devices.py
+│   ├── test_duckyscript.py
+│   ├── test_eapol.py
+│   └── test_ui.py
 ├── firmware/
 │   ├── platformio.ini            # multi-board build config (C3/S3/S2/devkit)
 │   ├── src/
@@ -14,28 +40,28 @@ nrsuite/
 │   │   └── override_sanity.cpp   # Bypass IDF raw frame sanity check
 │   └── lib/
 │       └── BridgeProtocol/       # Framed binary protocol (ESP32 side)
-├── nrsuite                       # Main CLI (chmod +x, run as ./nrsuite)
 ├── pcap_writer.py                # pcap writer, buffered + stream modes
 ├── data/                         # Logs and captures (auto-created, gitignored)
+├── .github/workflows/ci.yml      # Python + firmware + host-native CI
 └── README.md
 ```
 
-USB/bridge-protocol plumbing (`protocol.py`, `receiver.py`, `sender.py`, `usb_device.py`) has moved out of this repo into a standalone pip package, [`espbridge`](https://github.com/7wp81x/ESP-Bridge) — `nrsuite` imports it directly and auto-installs it on first run if missing:
+The public entry point remains `./nrsuite`. It is intentionally thin; the CLI
+logic, device/backend handling, command implementations, and pure parsing
+helpers live under `nrsuite_lib/` so they can be imported and tested without
+touching hardware.
 
-```python
-from espbridge import (
-    detect_backend, auto_detect_device, list_usb_devices, request_permission, launch_with_fd,
-    describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
-    init_uart_bridge, is_native_cdc, open_native_cdc_port,
-    find_cdc_control_interface, wrap_direct, wrap_fd,
-    ReceiverThread, Sender, Protocol,
-)
-```
+USB/bridge-protocol plumbing (`protocol.py`, `receiver.py`, `sender.py`,
+`usb_device.py`) still lives in the standalone pip package
+[`espbridge`](https://github.com/7wp81x/ESP-Bridge). NRSuite does not modify or
+vendor that package; `nrsuite_lib/espbridge_compat.py` is the single import
+point and preserves the existing auto-install behavior when `espbridge` is
+missing.
 
-If you're vendoring NRSuite offline or on a device without pip network access, install it manually first:
+Run the host-side test suite with:
 
 ```bash
-pip install espbridge
+python -m unittest discover -s tests -v
 ```
 
 ---

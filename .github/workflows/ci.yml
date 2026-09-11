@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: "ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}"
   cancel-in-progress: true
 
 jobs:
@@ -41,7 +41,7 @@ jobs:
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          python -m pip install platformio
+          python -m pip install platformio espbridge
 
       - name: Run host-side Python tests
         run: |
