@@ -13,6 +13,28 @@ All commands follow the same pattern — the script detects the USB device, requ
 
 ESP32-S2 is **supported and tested** for WiFi, USB mass storage, and BadUSB over native USB-OTG. See [Hardware](hardware.md) for details.
 
+## Interactive mode
+
+Keep one USB bridge open and run commands from a prompt:
+
+```bash
+./nrsuite --interact
+./nrsuite interact
+```
+
+Example session:
+
+```text
+(nrsuite:ESP32-S3) > status
+(nrsuite:ESP32-S3) > scan
+(nrsuite:ESP32-S3) > sniff --channel 6 -o capture.pcap
+(nrsuite:ESP32-S3) > exit
+```
+
+One-shot commands (`./nrsuite scan`, `./nrsuite sniff ...`, etc.) are unchanged.
+Interpreter mode is currently foreground-only: one command runs at a time and
+background jobs/plugins are a later addition.
+
 ## Scan nearby networks
 
 ```bash

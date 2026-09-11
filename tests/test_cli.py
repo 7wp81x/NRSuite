@@ -1,7 +1,10 @@
 import io
+import sys
 import unittest
 from contextlib import redirect_stderr
+from unittest import mock
 
+from nrsuite_lib import cli
 from nrsuite_lib.cli import _extract_device_flag, build_parser
 
 
@@ -150,6 +153,34 @@ class BuildParserTests(unittest.TestCase):
         self.assertEqual(args.command, "badusb")
         self.assertEqual(args.payload, "ducky.txt")
         self.assertTrue(args.masstorage)
+
+    def test_interact_flag(self):
+        args = self.parser.parse_args(["--interact"])
+        self.assertTrue(args.interact)
+        self.assertIsNone(args.command)
+
+    def test_interact_subcommand(self):
+        args = self.parser.parse_args(["interact"])
+        self.assertEqual(args.command, "interact")
+        self.assertFalse(args.interact)
+
+
+class MainInterpreterTests(unittest.TestCase):
+    def _run_main(self, argv):
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(cli, "detect_backend", return_value="root"), \
+             mock.patch.object(cli, "banner"), \
+             mock.patch("nrsuite_lib.interpreter.run_interpreter") as run_interpreter:
+            cli.main()
+        return run_interpreter
+
+    def test_interact_flag_starts_interpreter(self):
+        run_interpreter = self._run_main(["nrsuite", "--interact"])
+        run_interpreter.assert_called_once_with()
+
+    def test_interact_subcommand_starts_interpreter(self):
+        run_interpreter = self._run_main(["nrsuite", "interact"])
+        run_interpreter.assert_called_once_with()
 
 
 if __name__ == "__main__":
