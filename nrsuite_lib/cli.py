@@ -47,7 +47,7 @@ def _extract_device_flag(argv: list[str]):
         i += 1
     return device, out
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description="NRSuite - A wireless toolkit without root.",
         epilog="Device select:  nrsuite -d 0 scan  |  nrsuite scan -d 0  |  nrsuite devices",
@@ -136,6 +136,11 @@ def main():
     badusb_p.add_argument("--masstorage", action="store_true", help="Enable also mass storage mode")
     
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     # Strip -d/--device first so it can appear before or after the subcommand.
     device_pre, argv_rest = _extract_device_flag(sys.argv[1:])
     args = parser.parse_args(argv_rest)
