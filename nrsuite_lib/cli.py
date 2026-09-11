@@ -202,7 +202,12 @@ def main():
     elif fd_str is None:
         print("\033[0;93m[*]\033[0m Backend: termux-api (no-root)", file=sys.stderr)
         extra = argv_rest[1:]
-        bootstrap(args.command, extra, device_spec=device_spec)
+        bootstrap(
+            args.command,
+            extra,
+            device_spec=device_spec,
+            interactive=(args.command == "interact"),
+        )
     else:
         fd = int(fd_str)
         if args.command == "interact":

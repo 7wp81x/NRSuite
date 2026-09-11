@@ -14,6 +14,7 @@ from .espbridge_compat import (
     detect_backend,
     launch_with_fd,
     list_usb_devices,
+    open_usb_device,
     request_permission,
     wrap_direct,
 )
@@ -130,7 +131,8 @@ def do_list_devices():
     print(f"\n{C.GRAY}Use:  ./nrsuite -d 0 scan   or   ./nrsuite -d {paths[0]} scan{C.RESET}")
 
 
-def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = None) -> None:
+def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = None,
+              interactive: bool = False) -> None:
     try:
         device_path = resolve_device(device_spec)
         print(f"\033[0;92m[+]\033[0m Found device: \033[0;92m{device_path}\033[0m", file=sys.stderr)
@@ -147,6 +149,17 @@ def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = 
 
     script = config.ENTRYPOINT
     cmd = f"env NRSUITE_CHILD=1 python {script} {subcommand} " + ' '.join(shlex.quote(arg) for arg in extra_args)
+
+    if interactive:
+        # Keep the terminal directly attached for interactive prompts. The
+        # launch_with_fd() path redirects child stdout/stderr to a log file and
+        # only flushes complete lines, which hides a no-newline shell prompt.
+        try:
+            open_usb_device(device_path, cmd, export_as_env=True)
+        except Exception as e:
+            print(f"\033[0;91m[!]\033[0m Failed to start interactive session: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
 
     def _tail(line: str) -> None:
         print(line, end="", file=sys.stderr, flush=True)
