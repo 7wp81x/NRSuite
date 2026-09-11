@@ -5,3 +5,6 @@ firmware/.vscode/extensions.json
 .pio/
 release/
 *.bin
+data/
+__pycache__/
+*.py[cod]
