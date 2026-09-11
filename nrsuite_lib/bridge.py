@@ -63,3 +63,21 @@ def _wait_for_ready(proto, timeout=2.0):
             return True
         time.sleep(0.2)
     return False
+
+
+def _stop_bridge(proto, rx, timeout: float = 2.0) -> None:
+    """Best-effort teardown for early capability-check failures."""
+    if proto is not None:
+        try:
+            proto.stop()
+        except Exception:
+            pass
+    if rx is not None:
+        try:
+            rx.stop()
+        except Exception:
+            pass
+        try:
+            rx.join(timeout=timeout)
+        except Exception:
+            pass

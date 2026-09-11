@@ -14,15 +14,19 @@ import time
 
 from ..config import DATA_DIR, HTML_CHUNK_SIZE, MAX_B64_LEN
 from ..ui import C, _signal_bars, log
-from ..bridge import _drain_stale, _setup_bridge, _wait_for_ready
+from ..bridge import _drain_stale, _setup_bridge, _stop_bridge, _wait_for_ready
 from ..duckyscript import looks_like_script_line, split_pipe_commands as _split_pipe_commands
 from ..eapol import parse_eapol_message
+from ..capabilities import ensure_usb_otg
 
 def do_badusb(fd: int = None, args=None):
     _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
     _drain_stale(rx)
     _wait_for_ready(proto)
-    proto.start()
+    if not ensure_usb_otg(proto, "BadUSB", log_func=log):
+        _stop_bridge(proto, rx, timeout=3)
+        return
     
     local_path = args.payload
     if not os.path.exists(args.payload):

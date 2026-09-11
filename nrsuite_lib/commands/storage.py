@@ -14,9 +14,10 @@ import time
 
 from ..config import DATA_DIR, HTML_CHUNK_SIZE, MAX_B64_LEN
 from ..ui import C, _signal_bars, log
-from ..bridge import _drain_stale, _setup_bridge, _wait_for_ready
+from ..bridge import _drain_stale, _setup_bridge, _stop_bridge, _wait_for_ready
 from ..duckyscript import looks_like_script_line, split_pipe_commands as _split_pipe_commands
 from ..eapol import parse_eapol_message
+from ..capabilities import ensure_usb_otg
 
 def do_masstorage_start(fd: int = None, args=None):
     log("Entering USB Mass Storage mode...", C.CYAN)
@@ -24,6 +25,9 @@ def do_masstorage_start(fd: int = None, args=None):
     proto.start()
     _drain_stale(rx)
     _wait_for_ready(proto)
+    if not ensure_usb_otg(proto, "USB mass storage mode", log_func=log):
+        _stop_bridge(proto, rx, timeout=3)
+        return
 
     resp = proto.send_cmd("START_MSC", timeout=5.0)
 

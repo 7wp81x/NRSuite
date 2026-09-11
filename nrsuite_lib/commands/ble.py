@@ -14,9 +14,10 @@ import time
 
 from ..config import DATA_DIR, HTML_CHUNK_SIZE, MAX_B64_LEN
 from ..ui import C, _signal_bars, log
-from ..bridge import _drain_stale, _setup_bridge, _wait_for_ready
+from ..bridge import _drain_stale, _setup_bridge, _stop_bridge, _wait_for_ready
 from ..duckyscript import looks_like_script_line, split_pipe_commands as _split_pipe_commands
 from ..eapol import parse_eapol_message
+from ..capabilities import ensure_bluetooth
 
 def do_ble_badble(fd: int = None, args=None):
     log("Starting BLE HID (script mode)...", C.CYAN)
@@ -29,9 +30,12 @@ def do_ble_badble(fd: int = None, args=None):
         script = f.read()
 
     _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
     _drain_stale(rx)
     _wait_for_ready(proto)
-    proto.start()
+    if not ensure_bluetooth(proto, log_func=log):
+        _stop_bridge(proto, rx, timeout=2)
+        return
     start_resp = proto.send_cmd("BLE_START", {"name": args.advertise}, timeout=8)
     if not start_resp or not start_resp.get("ok"):
         log("Failed to start BLE advertising.", C.RED, level="err")
@@ -88,9 +92,12 @@ def do_ble_keyboard(fd: int = None, args=None):
     log("Ctrl+C to stop.", C.YELLOW)
 
     _, rx, tx, proto = _setup_bridge(fd)
+    proto.start()
     _drain_stale(rx)
     _wait_for_ready(proto)
-    proto.start()
+    if not ensure_bluetooth(proto, log_func=log):
+        _stop_bridge(proto, rx, timeout=2)
+        return
     start_resp = proto.send_cmd("BLE_START", {"name": args.advertise}, timeout=8)
     if not start_resp or not start_resp.get("ok"):
         log("Failed to start BLE advertising.", C.RED, level="err")
