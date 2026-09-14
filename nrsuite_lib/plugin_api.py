@@ -24,7 +24,7 @@ class PluginAPI:
 
     def register_post(self, name: str, handler, description: str = "") -> str:
         """Register a post script, e.g. post/wifi/count_packet."""
-        self.registry.register_post(name, handler, description)
+        self.registry.register_post(name, handler, description, source=self.plugin_name)
         return name
 
     def emit(self, event: str, **payload) -> None:

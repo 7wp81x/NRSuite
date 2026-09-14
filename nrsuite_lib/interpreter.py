@@ -33,51 +33,53 @@ from .hooks import HookBus
 from .plugins import PluginManager
 from .post_scripts import register_builtin
 from .modules import ModuleRegistry
-from .config import DATA_DIR, ENTRYPOINT
+from .config import DATA_DIR, ENTRYPOINT, PLUGIN_DIR, POST_DIR
 from .session import NRSuiteSession
 from .ui import C, log
 
 
-_HELP = """\
-NRSuite interactive commands:
-  help                 Show this help
-  clear / cls          Clear the terminal screen
-  status               Show firmware STATUS response
-  devices              Show the shared session device
-  show modules         List available modules
-  show devices         List USB devices
-  show options         Show current module options
-  use <module>         Select a module, e.g. use wifi/portal
-  use device <N>       Connect to a USB device
-  disconnect           Release the current USB device
-  set <option> <value> Set a module option, e.g. set channel 6
-  unset <option>       Clear a module option
-  run                  Run the current module
-  back                 Leave the current module
+_HELP = f"""\
+{C.BOLD}NRSuite interactive commands:{C.RESET}
+  {C.CYAN}help{C.RESET}                 Show this help
+  {C.CYAN}clear / cls{C.RESET}          Clear the terminal screen
+  {C.CYAN}status{C.RESET}               Show firmware STATUS response
+  {C.CYAN}devices{C.RESET}              Show the shared session device
+  {C.CYAN}show modules{C.RESET}         List available modules
+  {C.CYAN}show plugins{C.RESET}         List loaded plugins
+  {C.CYAN}show posts{C.RESET}           List post scripts
+  {C.CYAN}show devices{C.RESET}         List USB devices
+  {C.CYAN}show options{C.RESET}         Show current module options
+  {C.CYAN}use <module>{C.RESET}         Select a module, e.g. use wifi/portal
+  {C.CYAN}use device <N>{C.RESET}       Connect to a USB device
+  {C.CYAN}disconnect{C.RESET}           Release the current USB device
+  {C.CYAN}set <option> <value>{C.RESET} Set a module option, e.g. set channel 6
+  {C.CYAN}unset <option>{C.RESET}       Clear a module option
+  {C.CYAN}run{C.RESET}                  Run the current module
+  {C.CYAN}back{C.RESET}                 Leave the current module
 
-Flat one-shot commands still work:
-  scan
-  sniff [options]
-  deauth [options]
-  beacon [options]
-  portal [options]
-  ble ...
-  masstorage ...
-  badusb ...
-  exit / quit          Leave interpreter mode
+{C.BOLD}Flat one-shot commands still work:{C.RESET}
+  {C.GREEN}scan{C.RESET}
+  {C.GREEN}sniff [options]{C.RESET}
+  {C.GREEN}deauth [options]{C.RESET}
+  {C.GREEN}beacon [options]{C.RESET}
+  {C.GREEN}portal [options]{C.RESET}
+  {C.GREEN}ble ...{C.RESET}
+  {C.GREEN}masstorage ...{C.RESET}
+  {C.GREEN}badusb ...{C.RESET}
+  {C.GREEN}exit / quit{C.RESET}          Leave interpreter mode
 
-Examples:
-  use wifi/sniff
-  set channel 6
-  set hop true
-  run
-  back
+{C.BOLD}Examples:{C.RESET}
+  {C.GREEN}use wifi/sniff{C.RESET}
+  {C.GREEN}set channel 6{C.RESET}
+  {C.GREEN}set hop true{C.RESET}
+  {C.GREEN}run{C.RESET}
+  {C.GREEN}back{C.RESET}
 
-  use wifi/portal
-  show options
-  set action start
-  set ssid Test
-  run
+  {C.GREEN}use wifi/portal{C.RESET}
+  {C.GREEN}show options{C.RESET}
+  {C.GREEN}set action start{C.RESET}
+  {C.GREEN}set ssid Test{C.RESET}
+  {C.GREEN}run{C.RESET}
 """
 
 
@@ -104,17 +106,36 @@ class NRSuiteInterpreter(cmd.Cmd):
 
     def load_plugins(self, paths) -> None:
         self.plugin_paths = list(paths or [])
-        if not self.plugin_paths:
-            return
-        try:
-            loaded = self.plugin_manager.load_paths(self.plugin_paths)
-        except Exception as e:
-            self.stdout.write(f"{C.RED}[x] Plugin load failed: {e}{C.RESET}\n")
-            return
-        if loaded:
+        errors = []
+
+        if self.plugin_paths:
+            try:
+                self.plugin_manager.load_paths(self.plugin_paths)
+            except Exception as e:
+                errors.append(str(e))
+
+        for directory, loader in (
+            (PLUGIN_DIR, self.plugin_manager.load_paths),
+            (POST_DIR, self.plugin_manager.load_posts),
+        ):
+            if os.path.isdir(directory):
+                try:
+                    loader([directory])
+                except Exception as e:
+                    errors.append(f"{directory}: {e}")
+
+        plugins = [p["name"] for p in self.plugin_manager.loaded_plugins]
+        posts = [p["name"] for p in self.plugin_manager.loaded_posts]
+        if plugins:
             self.stdout.write(
-                f"{C.GREEN}[+] Loaded plugins: {', '.join(loaded)}{C.RESET}\n"
+                f"{C.GREEN}[+] Loaded plugins: {', '.join(plugins)}{C.RESET}\n"
             )
+        if posts:
+            self.stdout.write(
+                f"{C.GREEN}[+] Loaded posts: {', '.join(posts)}{C.RESET}\n"
+            )
+        for error in errors:
+            self.stdout.write(f"{C.RED}[x] Plugin load failed: {error}{C.RESET}\n")
 
     @property
     def prompt(self):
@@ -284,15 +305,53 @@ class NRSuiteInterpreter(cmd.Cmd):
 
     def _cmd_show(self, args) -> bool:
         what = args[0].lower() if args else "modules"
+
         if what == "modules":
             prefix = args[1] if len(args) > 1 else None
             modules = self.registry.list_modules(prefix)
+            total = len(self.registry.modules)
+            if prefix:
+                self.stdout.write(
+                    f"{C.CYAN}[*] {len(modules)} matching of {total} modules loaded{C.RESET}\n"
+                )
+            else:
+                self.stdout.write(f"{C.CYAN}[*] {total} modules loaded{C.RESET}\n")
             if not modules:
                 self.stdout.write("[!] No matching modules.\n")
             else:
                 for module in modules:
-                    self.stdout.write(f"  {C.CYAN}{module.name:<20}{C.RESET} {module.description}\n")
+                    self.stdout.write(
+                        f"  {C.CYAN}{module.name:<20}{C.RESET} {module.description}\n"
+                    )
             return False
+
+        if what == "plugins":
+            records = self.plugin_manager.loaded_plugins
+            self.stdout.write(f"{C.CYAN}[*] {len(records)} plugin(s) loaded{C.RESET}\n")
+            if not records:
+                self.stdout.write(
+                    "  Use --plugin PATH or place files in ~/.config/nrsuite/plugins\n"
+                )
+            for record in records:
+                self.stdout.write(
+                    f"  {C.CYAN}{record['name']:<20}{C.RESET} {record['path']}\n"
+                )
+            return False
+
+        if what in ("posts", "post"):
+            posts = self.registry.post_scripts
+            self.stdout.write(
+                f"{C.CYAN}[*] {len(posts)} post script(s) loaded{C.RESET}\n"
+            )
+            for name in sorted(posts):
+                entry = posts[name]
+                self.stdout.write(
+                    f"  {C.CYAN}{name:<28}{C.RESET} "
+                    f"{entry.get('description', '')} "
+                    f"[{entry.get('source', 'builtin')}]\n"
+                )
+            return False
+
         if what in ("options", "option"):
             if self.registry.current is None:
                 self.stdout.write("[!] No module selected. Use 'use <module>' first.\n")
@@ -301,10 +360,12 @@ class NRSuiteInterpreter(cmd.Cmd):
                 self.stdout.write(self.registry.current.options_text(self.registry.values) + "\n")
                 self.stdout.write(f"  {'pscript':<16} current={self.post_script!r}\n")
             return False
+
         if what == "status":
             return self.do_status("")
         if what in ("devices", "device"):
             return self._show_devices()
+
         self.stdout.write(f"[!] Unknown show target: {what}\n")
         return False
 

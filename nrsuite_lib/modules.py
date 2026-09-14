@@ -178,10 +178,12 @@ class ModuleRegistry:
         self.modules[name] = DynamicModule(name, description, handler)
         return name
 
-    def register_post(self, name: str, handler, description: str = "") -> None:
+    def register_post(self, name: str, handler, description: str = "",
+                      source: str = "builtin") -> None:
         self.post_scripts[name] = {
             "handler": handler,
             "description": description,
+            "source": source,
         }
 
     def list_modules(self, prefix: str | None = None) -> list[Module]:

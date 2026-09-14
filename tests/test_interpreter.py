@@ -193,6 +193,16 @@ class InterpreterTests(unittest.TestCase):
         self.assertEqual(calls, ["handler", ("post", "plug/tool")])
         self.assertEqual(events, ["pre_module", "post_module"])
 
+    def test_show_posts_lists_builtin(self):
+        self.interp.default("show posts")
+        output = strip_ansi(self.output())
+        self.assertIn("post/wifi/count_packet", output)
+        self.assertIn("post script(s) loaded", output)
+
+    def test_show_plugins_empty(self):
+        self.interp.default("show plugins")
+        self.assertIn("0 plugin(s) loaded", strip_ansi(self.output()))
+
 
 if __name__ == "__main__":
     unittest.main()

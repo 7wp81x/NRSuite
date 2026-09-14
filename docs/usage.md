@@ -79,6 +79,15 @@ Load a plugin file or directory explicitly:
 ./nrsuite interact --plugin ~/.config/nrsuite/plugins
 ```
 
+NRSuite also auto-loads user plugins and post scripts from:
+
+```text
+~/.config/nrsuite/plugins/
+~/.config/nrsuite/posts/
+```
+
+Use `show plugins` and `show posts` to list what was loaded, including counts.
+
 A plugin is a Python file with a `register(api)` function:
 
 ```python
