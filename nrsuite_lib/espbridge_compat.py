@@ -9,7 +9,7 @@ import sys
 
 try:
     from espbridge import (
-        detect_backend, auto_detect_device, request_permission, open_usb_device, launch_with_fd,
+        detect_backend, auto_detect_device, request_permission, launch_with_fd,
         describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
         init_uart_bridge, is_native_cdc, open_native_cdc_port,
         find_cdc_control_interface, wrap_direct, wrap_fd, list_usb_devices,
@@ -19,7 +19,7 @@ except ImportError:
     print("\033[0;93m[*]\033[0m espbridge not found, installing...", file=sys.stderr)
     subprocess.check_call([sys.executable, "-m", "pip", "install", "espbridge"])
     from espbridge import (
-        detect_backend, auto_detect_device, request_permission, open_usb_device, launch_with_fd,
+        detect_backend, auto_detect_device, request_permission, launch_with_fd,
         describe_device, get_cdc_endpoints, claim_device, reset_endpoint_toggles,
         init_uart_bridge, is_native_cdc, open_native_cdc_port,
         find_cdc_control_interface, wrap_direct, wrap_fd, list_usb_devices,
@@ -27,7 +27,7 @@ except ImportError:
     )
 
 __all__ = [
-    "detect_backend", "auto_detect_device", "request_permission", "open_usb_device", "launch_with_fd",
+    "detect_backend", "auto_detect_device", "request_permission", "launch_with_fd",
     "describe_device", "get_cdc_endpoints", "claim_device", "reset_endpoint_toggles",
     "init_uart_bridge", "is_native_cdc", "open_native_cdc_port",
     "find_cdc_control_interface", "wrap_direct", "wrap_fd", "list_usb_devices",
