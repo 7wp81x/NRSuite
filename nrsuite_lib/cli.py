@@ -59,9 +59,22 @@ def build_parser():
         default=None,
         help="USB device path or index (also accepted after the subcommand)",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument(
+        "-i", "--interact",
+        action="store_true",
+        help="Start the interactive interpreter instead of running one command",
+    )
+    parser.add_argument(
+        "--plugin",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Load a plugin file or directory in interactive mode (repeatable)",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     subparsers.add_parser("devices", help="List connected USB devices (for -d/--device)")
+    subparsers.add_parser("interact", help="Start the interactive interpreter")
     subparsers.add_parser("scan", help="Scan nearby WiFi networks")
 
     # Sniff
@@ -144,6 +157,15 @@ def main():
     # Strip -d/--device first so it can appear before or after the subcommand.
     device_pre, argv_rest = _extract_device_flag(sys.argv[1:])
     args = parser.parse_args(argv_rest)
+
+    if args.interact:
+        if args.command not in (None, "interact"):
+            parser.error("--interact cannot be combined with a command")
+        args.command = "interact"
+
+    if args.command is None:
+        parser.error("the following arguments are required: command")
+
     if not os.environ.get("NRSUITE_CHILD"):
         banner()
 
@@ -158,6 +180,7 @@ def main():
         sys.exit(1)
 
     device_spec = device_pre or getattr(args, "device", None) or os.environ.get("NRSUITE_DEVICE")
+    plugin_paths = list(getattr(args, "plugin", []) or [])
 
     fd_str = os.environ.get("TERMUX_USB_FD")
     if backend == "root":
@@ -165,7 +188,10 @@ def main():
         # --device is recorded for future multi-device root selection.
         if device_spec:
             log(f"Device selector: {device_spec} (root backend uses first matching libusb device)", C.YELLOW)
-        if args.command == "scan":
+        if args.command == "interact":
+            from .interpreter import run_interpreter
+            run_interpreter(auto_connect=bool(device_spec), plugin_paths=plugin_paths)
+        elif args.command == "scan":
             do_scan()
         elif args.command == "sniff":
             do_sniff(args=args)
@@ -183,11 +209,23 @@ def main():
             do_badusb(args=args)
     elif fd_str is None:
         print("\033[0;93m[*]\033[0m Backend: termux-api (no-root)", file=sys.stderr)
-        extra = argv_rest[1:]
-        bootstrap(args.command, extra, device_spec=device_spec)
+        if args.command == "interact" and not device_spec:
+            from .interpreter import run_interpreter
+            run_interpreter(auto_connect=False, plugin_paths=plugin_paths)
+        else:
+            extra = argv_rest[1:]
+            bootstrap(
+                args.command,
+                extra,
+                device_spec=device_spec,
+                interactive=(args.command == "interact"),
+            )
     else:
         fd = int(fd_str)
-        if args.command == "scan":do_scan(fd=fd)
+        if args.command == "interact":
+            from .interpreter import run_interpreter
+            run_interpreter(fd=fd, auto_connect=True, plugin_paths=plugin_paths)
+        elif args.command == "scan":do_scan(fd=fd)
         elif args.command == "sniff":do_sniff(fd=fd, args=args)
         elif args.command == "deauth":do_deauth(fd=fd, args=args)
         elif args.command == "beacon": do_beacon(fd=fd, args=args)

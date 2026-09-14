@@ -8,6 +8,19 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 LOG_FILE = os.path.join(DATA_DIR, "wifi_tool.log")
 ENTRYPOINT = os.path.join(BASE_DIR, "nrsuite")
+XDG_CONFIG_HOME = os.environ.get(
+    "XDG_CONFIG_HOME",
+    os.path.join(os.path.expanduser("~"), ".config"),
+)
+CONFIG_DIR = os.path.join(XDG_CONFIG_HOME, "nrsuite")
+PLUGIN_DIR = os.path.join(CONFIG_DIR, "plugins")
+POST_DIR = os.path.join(CONFIG_DIR, "posts")
+
+TERMUX_API = os.path.join(
+    os.environ.get("PREFIX", "/data/data/com.termux/files/usr"),
+    "libexec",
+    "termux-api",
+)
 
 IS_CHILD = "TERMUX_USB_FD" in os.environ
 

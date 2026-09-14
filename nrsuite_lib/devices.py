@@ -130,7 +130,49 @@ def do_list_devices():
     print(f"\n{C.GRAY}Use:  ./nrsuite -d 0 scan   or   ./nrsuite -d {paths[0]} scan{C.RESET}")
 
 
-def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = None) -> None:
+def _launch_with_fd_tty(device_path: str, cmd: str) -> None:
+    """Launch termux-api Usb open callback with the terminal still attached.
+
+    This deliberately mirrors espbridge's proven launch_with_fd() callback
+    protocol, but skips the log-file/stdout redirection so an interactive
+    prompt can be flushed immediately.
+    """
+    env = os.environ.copy()
+    env["TERMUX_CALLBACK"] = cmd
+    env["TERMUX_EXPORT_FD"] = "true"
+    argv = [
+        config.TERMUX_API, "Usb", "-a", "open",
+        "--ez", "request", "true", "--es", "device", device_path,
+    ]
+
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.execve(config.TERMUX_API, argv, env)
+        except Exception:
+            os._exit(1)
+
+    # The connected child owns the terminal while it runs. If the parent also
+    # handled SIGINT here, Ctrl+C inside the child would make the parent return
+    # early and fight the child for the prompt.
+    import signal
+    old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        _, status = os.waitpid(pid, 0)
+    finally:
+        signal.signal(signal.SIGINT, old_sigint)
+
+    exit_code = os.waitstatus_to_exitcode(status)
+    if exit_code != 0:
+        print(
+            f"\033[0;91m[!]\033[0m termux-api interactive launch exited {exit_code}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = None,
+              interactive: bool = False) -> None:
     try:
         device_path = resolve_device(device_spec)
         print(f"\033[0;92m[+]\033[0m Found device: \033[0;92m{device_path}\033[0m", file=sys.stderr)
@@ -147,6 +189,13 @@ def bootstrap(subcommand: str, extra_args: list[str], device_spec: str | None = 
 
     script = config.ENTRYPOINT
     cmd = f"env NRSUITE_CHILD=1 python {script} {subcommand} " + ' '.join(shlex.quote(arg) for arg in extra_args)
+
+    if interactive:
+        # Keep the terminal directly attached for interactive prompts. The
+        # normal launch_with_fd() path redirects stdout/stderr to a log file
+        # and only flushes complete lines, which hides a no-newline prompt.
+        _launch_with_fd_tty(device_path, cmd)
+        return
 
     def _tail(line: str) -> None:
         print(line, end="", file=sys.stderr, flush=True)

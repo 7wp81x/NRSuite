@@ -1,4 +1,6 @@
+import io
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from nrsuite_lib import devices
@@ -50,6 +52,21 @@ class ResolveDeviceTests(unittest.TestCase):
         ):
             with self.assertRaises(RuntimeError):
                 devices.resolve_device("missing")
+
+
+class BootstrapInteractiveTests(unittest.TestCase):
+    def test_interactive_bootstrap_uses_tty_launch_path(self):
+        with mock.patch.object(devices, "resolve_device", return_value="/dev/test"), \
+             mock.patch.object(devices, "request_permission", return_value=True), \
+             mock.patch.object(devices, "_launch_with_fd_tty") as launch_tty, \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            devices.bootstrap("interact", [], interactive=True)
+
+        launch_tty.assert_called_once()
+        args, kwargs = launch_tty.call_args
+        self.assertEqual(args[0], "/dev/test")
+        self.assertIn("interact", args[1])
+        self.assertEqual(kwargs, {})
 
 
 if __name__ == "__main__":
