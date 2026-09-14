@@ -15,23 +15,47 @@ ESP32-S2 is **supported and tested** for WiFi, USB mass storage, and BadUSB over
 
 ## Interactive mode
 
-Keep one USB bridge open and run commands from a prompt:
+Keep one USB bridge open and run commands from a single prompt:
 
 ```bash
 ./nrsuite --interact
 ./nrsuite interact
 ```
 
-Example session:
+Interactive mode starts **disconnected** by default. It shows the backend and
+available USB devices, then waits for you to choose one:
+
+```text
+[*] Backend: termux-api (no-root)
+[*] USB devices:
+  [0] /dev/bus/usb/002/033
+  [1] /dev/bus/usb/002/034
+
+(nrsuite) > use device 0
+[*] Connecting to /dev/bus/usb/002/033...
+```
+
+After the Termux permission callback runs, you get a connected prompt:
 
 ```text
 (nrsuite:ESP32-S3) > status
 (nrsuite:ESP32-S3) > scan
 (nrsuite:ESP32-S3) > sniff --channel 6 -o capture.pcap
-(nrsuite:ESP32-S3) > exit
+(nrsuite:ESP32-S3) > disconnect
 ```
 
-Module mode is also available:
+Useful device commands:
+
+```text
+show devices
+use device 0
+use device /dev/bus/usb/002/033
+disconnect
+```
+
+### Module mode
+
+Module mode gives a MetaSploit-style `use / set / run` workflow:
 
 ```text
 (nrsuite:ESP32-S3) > show modules
@@ -42,6 +66,10 @@ Module mode is also available:
 (nrsuite:ESP32-S3:wifi/portal) > run
 (nrsuite:ESP32-S3:wifi/portal) > back
 ```
+
+`show modules` lists all modules. `use wifi` lists all `wifi/*` modules.
+`show options` lists the active module's options and current values.
+`help <topic>` shows a module or group's help.
 
 Flat one-shot commands (`./nrsuite scan`, `./nrsuite sniff ...`, etc.) are
 unchanged. Interpreter mode is currently foreground-only: one command runs at

@@ -166,21 +166,34 @@ class BuildParserTests(unittest.TestCase):
 
 
 class MainInterpreterTests(unittest.TestCase):
-    def _run_main(self, argv):
+    def _run_main(self, argv, backend="root"):
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(cli, "detect_backend", return_value="root"), \
+             mock.patch.object(cli, "detect_backend", return_value=backend), \
              mock.patch.object(cli, "banner"), \
+             mock.patch.object(cli, "log"), \
+             mock.patch.object(cli, "bootstrap") as bootstrap, \
              mock.patch("nrsuite_lib.interpreter.run_interpreter") as run_interpreter:
             cli.main()
-        return run_interpreter
+        return run_interpreter, bootstrap
 
-    def test_interact_flag_starts_interpreter(self):
-        run_interpreter = self._run_main(["nrsuite", "--interact"])
-        run_interpreter.assert_called_once_with()
+    def test_interact_flag_starts_disconnected_interpreter(self):
+        run_interpreter, bootstrap = self._run_main(["nrsuite", "--interact"])
+        run_interpreter.assert_called_once_with(auto_connect=False)
+        bootstrap.assert_not_called()
 
-    def test_interact_subcommand_starts_interpreter(self):
-        run_interpreter = self._run_main(["nrsuite", "interact"])
-        run_interpreter.assert_called_once_with()
+    def test_interact_subcommand_starts_disconnected_interpreter(self):
+        run_interpreter, bootstrap = self._run_main(["nrsuite", "interact"])
+        run_interpreter.assert_called_once_with(auto_connect=False)
+        bootstrap.assert_not_called()
+
+    def test_interact_with_device_autoconnects(self):
+        run_interpreter, _ = self._run_main(["nrsuite", "--interact", "-d", "0"])
+        run_interpreter.assert_called_once_with(auto_connect=True)
+
+    def test_termux_interact_without_device_is_disconnected(self):
+        run_interpreter, bootstrap = self._run_main(["nrsuite", "interact"], backend="termux")
+        run_interpreter.assert_called_once_with(auto_connect=False)
+        bootstrap.assert_not_called()
 
 
 if __name__ == "__main__":
