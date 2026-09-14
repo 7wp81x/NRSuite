@@ -37,6 +37,7 @@ from .ui import C, log
 _HELP = """\
 NRSuite interactive commands:
   help                 Show this help
+  clear / cls          Clear the terminal screen
   status               Show firmware STATUS response
   devices              Show the shared session device
   show modules         List available modules
@@ -158,6 +159,17 @@ class NRSuiteInterpreter(cmd.Cmd):
         self.stdout.write("\n")
         return True
 
+    def do_clear(self, arg):
+        """Clear the terminal screen."""
+        self.stdout.write("\033[2J\033[H")
+        try:
+            self.stdout.flush()
+        except Exception:
+            pass
+        return False
+
+    do_cls = do_clear
+
     def do_status(self, arg):
         """Query and print firmware STATUS."""
         if not self.session.alive:
@@ -191,6 +203,9 @@ class NRSuiteInterpreter(cmd.Cmd):
 
         if argv and argv[0] in ("exit", "quit"):
             return True
+
+        if argv and argv[0].lower() in ("clear", "cls"):
+            return self.do_clear("")
 
         if argv and argv[0].lower() in (
             "show", "use", "set", "unset", "run", "exploit", "back", "disconnect"

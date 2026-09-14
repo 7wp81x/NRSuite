@@ -150,6 +150,15 @@ class InterpreterTests(unittest.TestCase):
         self.interp.default("back")
         self.assertNotIn("wifi/sniff", strip_ansi(self.interp.prompt))
 
+    def test_clear_emits_ansi_clear(self):
+        result = self.interp.default("clear")
+        self.assertFalse(result)
+        self.assertIn("\033[2J\033[H", self.output())
+
+    def test_cls_alias(self):
+        self.interp.default("cls")
+        self.assertIn("\033[2J\033[H", self.output())
+
 
 if __name__ == "__main__":
     unittest.main()

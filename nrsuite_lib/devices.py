@@ -152,19 +152,15 @@ def _launch_with_fd_tty(device_path: str, cmd: str) -> None:
         except Exception:
             os._exit(1)
 
+    # The connected child owns the terminal while it runs. If the parent also
+    # handled SIGINT here, Ctrl+C inside the child would make the parent return
+    # early and fight the child for the prompt.
+    import signal
+    old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         _, status = os.waitpid(pid, 0)
-    except KeyboardInterrupt:
-        import signal
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
-        raise
+    finally:
+        signal.signal(signal.SIGINT, old_sigint)
 
     exit_code = os.waitstatus_to_exitcode(status)
     if exit_code != 0:
