@@ -70,6 +70,37 @@ class InterpreterTests(unittest.TestCase):
         self.assertTrue(result)
         do_badusb.assert_called_once()
 
+    def test_scan_calls_handler_without_args(self):
+        with mock.patch.object(interpreter, "do_scan") as do_scan:
+            result = self.interp.default("scan")
+
+        self.assertFalse(result)
+        do_scan.assert_called_once_with()
+
+    def test_module_use_set_run_dispatches(self):
+        self.interp.default("use wifi/sniff")
+        self.assertIn("wifi/sniff", self.interp.prompt)
+        self.interp.default("set channel 6")
+        self.interp.default("set hop true")
+
+        with mock.patch.object(interpreter, "do_sniff") as do_sniff:
+            result = self.interp.default("run")
+
+        self.assertFalse(result)
+        do_sniff.assert_called_once()
+        args = do_sniff.call_args.kwargs["args"]
+        self.assertEqual(args.channel, 6)
+        self.assertTrue(args.hop)
+
+    def test_show_modules_lists_wifi(self):
+        self.interp.default("show modules")
+        self.assertIn("wifi/sniff", self.interp.stdout.getvalue())
+
+    def test_back_leaves_module(self):
+        self.interp.default("use wifi/sniff")
+        self.interp.default("back")
+        self.assertNotIn("wifi/sniff", self.interp.prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

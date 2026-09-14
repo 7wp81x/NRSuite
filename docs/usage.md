@@ -31,9 +31,21 @@ Example session:
 (nrsuite:ESP32-S3) > exit
 ```
 
-One-shot commands (`./nrsuite scan`, `./nrsuite sniff ...`, etc.) are unchanged.
-Interpreter mode is currently foreground-only: one command runs at a time and
-background jobs/plugins are a later addition.
+Module mode is also available:
+
+```text
+(nrsuite:ESP32-S3) > show modules
+(nrsuite:ESP32-S3) > use wifi/portal
+(nrsuite:ESP32-S3:wifi/portal) > show options
+(nrsuite:ESP32-S3:wifi/portal) > set action start
+(nrsuite:ESP32-S3:wifi/portal) > set ssid "Lab WiFi"
+(nrsuite:ESP32-S3:wifi/portal) > run
+(nrsuite:ESP32-S3:wifi/portal) > back
+```
+
+Flat one-shot commands (`./nrsuite scan`, `./nrsuite sniff ...`, etc.) are
+unchanged. Interpreter mode is currently foreground-only: one command runs at
+a time and background jobs/plugins are a later addition.
 
 ## Scan nearby networks
 

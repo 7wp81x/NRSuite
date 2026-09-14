@@ -26,6 +26,7 @@ from .commands import (
     do_sniff,
 )
 from .espbridge_compat import describe_device
+from .modules import ModuleRegistry
 from .session import NRSuiteSession
 from .ui import C, log
 
@@ -35,22 +36,37 @@ NRSuite interactive commands:
   help                 Show this help
   status               Show firmware STATUS response
   devices              Show the shared session device
-  scan                 Scan nearby WiFi networks
-  sniff [options]      Capture packets
-  deauth [options]     Send deauthentication frames
-  beacon [options]     Beacon spam
-  portal [options]     Captive portal
-  ble ...              BLE HID commands
-  masstorage ...       Mass storage commands
-  badusb ...           BadUSB command
+  show modules         List available modules
+  show options         Show current module options
+  use <module>         Select a module, e.g. use wifi/portal
+  set <option> <value> Set a module option, e.g. set channel 6
+  unset <option>       Clear a module option
+  run                  Run the current module
+  back                 Leave the current module
+
+Flat one-shot commands still work:
+  scan
+  sniff [options]
+  deauth [options]
+  beacon [options]
+  portal [options]
+  ble ...
+  masstorage ...
+  badusb ...
   exit / quit          Leave interpreter mode
 
-Command arguments are the same as one-shot mode. Examples:
-  scan
-  sniff --channel 6 -o capture.pcap
-  deauth --bssid AA:BB:CC:DD:EE:FF --channel 6 --count 5
-  beacon start --ssid Test --channel 6
-  ble badble --payload payload.txt
+Examples:
+  use wifi/sniff
+  set channel 6
+  set hop true
+  run
+  back
+
+  use wifi/portal
+  show options
+  set action start
+  set ssid Test
+  run
 """
 
 
@@ -60,6 +76,7 @@ class NRSuiteInterpreter(cmd.Cmd):
     def __init__(self, session: NRSuiteSession):
         super().__init__()
         self.session = session
+        self.registry = ModuleRegistry()
         self.intro = (
             f"NRSuite interactive mode"
             f"{f' ({session.chip})' if session.chip else ''}."
@@ -71,6 +88,8 @@ class NRSuiteInterpreter(cmd.Cmd):
         label = "(nrsuite"
         if self.session.chip:
             label += f":{self.session.chip}"
+        if self.registry.current:
+            label += f":{self.registry.current.name}"
         return label + ") > "
 
     def preloop(self):
@@ -129,6 +148,11 @@ class NRSuiteInterpreter(cmd.Cmd):
         if argv and argv[0] in ("exit", "quit"):
             return True
 
+        if argv and argv[0].lower() in (
+            "show", "use", "set", "unset", "run", "exploit", "back"
+        ):
+            return self._handle_module_command(argv)
+
         parser = build_parser()
         try:
             args = parser.parse_args(argv)
@@ -141,6 +165,102 @@ class NRSuiteInterpreter(cmd.Cmd):
 
         return self._dispatch(args)
 
+    def _handle_module_command(self, argv) -> bool:
+        command = argv[0].lower()
+        args = argv[1:]
+        if command == "show":
+            return self._cmd_show(args)
+        if command == "use":
+            return self._cmd_use(args)
+        if command == "set":
+            return self._cmd_set(args)
+        if command == "unset":
+            return self._cmd_unset(args)
+        if command == "back":
+            return self._cmd_back()
+        if command in ("run", "exploit"):
+            return self._cmd_run()
+        return False
+
+    def _cmd_show(self, args) -> bool:
+        what = args[0].lower() if args else "modules"
+        if what == "modules":
+            prefix = args[1] if len(args) > 1 else None
+            modules = self.registry.list_modules(prefix)
+            if not modules:
+                self.stdout.write("[!] No matching modules.\n")
+            else:
+                for module in modules:
+                    self.stdout.write(f"  {module.name:<20} {module.description}\n")
+            return False
+        if what in ("options", "option"):
+            if self.registry.current is None:
+                self.stdout.write("[!] No module selected. Use 'use <module>' first.\n")
+            else:
+                self.stdout.write(f"Module: {self.registry.current.name}\n")
+                self.stdout.write(self.registry.current.options_text(self.registry.values) + "\n")
+            return False
+        if what == "status":
+            return self.do_status("")
+        if what in ("devices", "device"):
+            return self.do_devices("")
+        self.stdout.write(f"[!] Unknown show target: {what}\n")
+        return False
+
+    def _cmd_use(self, args) -> bool:
+        if not args:
+            self.stdout.write("[!] Usage: use <module>\n")
+            return False
+        ok, message = self.registry.use(args[0])
+        self.stdout.write((("[+] " if ok else "[!] ") + message + "\n"))
+        return False
+
+    def _cmd_set(self, args) -> bool:
+        if len(args) < 2:
+            self.stdout.write("[!] Usage: set <option> <value>\n")
+            return False
+        name = args[0]
+        raw = " ".join(args[1:])
+        ok, message = self.registry.set_value(name, raw)
+        self.stdout.write((("[+] " if ok else "[!] ") + message + "\n"))
+        return False
+
+    def _cmd_unset(self, args) -> bool:
+        if not args:
+            self.stdout.write("[!] Usage: unset <option>\n")
+            return False
+        ok, message = self.registry.unset_value(args[0])
+        self.stdout.write((("[+] " if ok else "[!] ") + message + "\n"))
+        return False
+
+    def _cmd_back(self) -> bool:
+        if self.registry.current is None:
+            self.stdout.write("[!] No module selected.\n")
+        else:
+            name = self.registry.current.name
+            self.registry.current = None
+            self.registry.values = {}
+            self.stdout.write(f"[+] Left module {name}\n")
+        return False
+
+    def _cmd_run(self) -> bool:
+        if self.registry.current is None:
+            self.stdout.write("[!] No module selected. Use 'use <module>' first.\n")
+            return False
+
+        try:
+            argv = self.registry.build()
+        except Exception as e:
+            self.stdout.write(f"[!] {e}\n")
+            return False
+
+        self.stdout.write(f"[*] Running: {' '.join(argv)}\n")
+        try:
+            args = self.registry.parse(argv)
+        except SystemExit:
+            return False
+        return self._dispatch(args)
+
     def _dispatch(self, args) -> bool:
         self.session.begin_command()
         self.session.activate()
@@ -150,7 +270,7 @@ class NRSuiteInterpreter(cmd.Cmd):
             if args.command == "devices":
                 self.do_devices("")
             elif args.command == "scan":
-                do_scan(args=args)
+                do_scan()
             elif args.command == "sniff":
                 do_sniff(args=args)
             elif args.command == "deauth":
