@@ -71,6 +71,56 @@ Module mode gives a MetaSploit-style `use / set / run` workflow:
 `show options` lists the active module's options and current values.
 `help <topic>` shows a module or group's help.
 
+### Plugins
+
+Load a plugin file or directory explicitly:
+
+```bash
+./nrsuite interact --plugin ~/.config/nrsuite/plugins
+```
+
+A plugin is a Python file with a `register(api)` function:
+
+```python
+def handler(context):
+    return {"ok": True}
+
+def register(api):
+    api.register_module("my_tool", handler, "Example plugin module")
+    api.on("post_module", lambda event, payload: None)
+```
+
+Then use it like a normal module:
+
+```text
+(nrsuite) > use plug/my_tool
+(nrsuite:plug/my_tool) > run
+```
+
+Plugins are trusted Python code. Do not load plugins you did not write or audit.
+
+### Post scripts
+
+Post scripts run automatically after a module finishes:
+
+```text
+(nrsuite:ESP32-S3) > use wifi/sniff
+(nrsuite:ESP32-S3:wifi/sniff) > set pscript post/wifi/count_packet
+(nrsuite:ESP32-S3:wifi/sniff) > run
+```
+
+The built-in `post/wifi/count_packet` post script reads the most recent `.pcap`
+produced by the module and reports the packet count.
+
+### Terminal
+
+```text
+clear
+cls
+```
+
+Clear the interpreter screen.
+
 Flat one-shot commands (`./nrsuite scan`, `./nrsuite sniff ...`, etc.) are
 unchanged. Interpreter mode is currently foreground-only: one command runs at
 a time and background jobs/plugins are a later addition.

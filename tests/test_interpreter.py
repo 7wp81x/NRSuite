@@ -159,6 +159,40 @@ class InterpreterTests(unittest.TestCase):
         self.interp.default("cls")
         self.assertIn("\033[2J\033[H", self.output())
 
+    def test_set_pscript(self):
+        self.interp.default("use wifi/scan")
+        self.interp.default("set pscript post/wifi/count_packet")
+        self.assertEqual(self.interp.post_script, "post/wifi/count_packet")
+
+    def test_dynamic_module_runs_with_post_script_and_hooks(self):
+        events = []
+        calls = []
+
+        def handler(context):
+            calls.append("handler")
+            return {"ok": True}
+
+        def post(context):
+            calls.append(("post", context["module"]))
+            return {"ok": True}
+
+        self.interp.hooks.on(
+            "pre_module", lambda event, payload: events.append(event)
+        )
+        self.interp.hooks.on(
+            "post_module", lambda event, payload: events.append(event)
+        )
+        self.interp.registry.register_dynamic("tool", "Test tool", handler)
+        self.interp.registry.register_post("post/test", post)
+
+        self.interp.default("use plug/tool")
+        self.interp.default("set pscript post/test")
+        result = self.interp.default("run")
+
+        self.assertFalse(result)
+        self.assertEqual(calls, ["handler", ("post", "plug/tool")])
+        self.assertEqual(events, ["pre_module", "post_module"])
+
 
 if __name__ == "__main__":
     unittest.main()

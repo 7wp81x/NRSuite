@@ -47,6 +47,26 @@ def _is_append(action) -> bool:
     return isinstance(action, argparse._AppendAction)
 
 
+class DynamicModule:
+    """Module registered by a plugin, with no argparse-derived options."""
+
+    def __init__(self, name, description, handler):
+        self.name = name
+        self.description = description
+        self.handler = handler
+        self.options = {}
+        self.aliases = {}
+
+    def display_name(self, dest):
+        return dest
+
+    def options_text(self, values):
+        return "  (plugin module; no declarative options)"
+
+    def build_argv(self, values):
+        raise RuntimeError("plugin modules are invoked directly, not via argparse")
+
+
 class Module:
     def __init__(self, name, description, path, parser):
         self.name = name
@@ -149,6 +169,20 @@ class ModuleRegistry:
         }
         self.current = None
         self.values = {}
+        self.post_scripts = {}
+
+    def register_dynamic(self, name: str, description: str, handler) -> str:
+        name = name.strip()
+        if not name.startswith("plug/"):
+            name = f"plug/{name}"
+        self.modules[name] = DynamicModule(name, description, handler)
+        return name
+
+    def register_post(self, name: str, handler, description: str = "") -> None:
+        self.post_scripts[name] = {
+            "handler": handler,
+            "description": description,
+        }
 
     def list_modules(self, prefix: str | None = None) -> list[Module]:
         names = sorted(self.modules)

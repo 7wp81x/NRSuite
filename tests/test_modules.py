@@ -70,6 +70,19 @@ class ModuleRegistryTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("Unknown option", message)
 
+    def test_register_dynamic_module(self):
+        def handler(context):
+            return {"ok": True}
+
+        name = self.registry.register_dynamic("my_tool", "Plugin tool", handler)
+        self.assertEqual(name, "plug/my_tool")
+        self.assertIn(name, self.registry.modules)
+        self.assertIs(self.registry.modules[name].handler, handler)
+
+    def test_register_post_script(self):
+        self.registry.register_post("post/test", lambda context: {"ok": True})
+        self.assertIn("post/test", self.registry.post_scripts)
+
 
 if __name__ == "__main__":
     unittest.main()

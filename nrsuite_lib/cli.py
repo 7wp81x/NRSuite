@@ -64,6 +64,13 @@ def build_parser():
         action="store_true",
         help="Start the interactive interpreter instead of running one command",
     )
+    parser.add_argument(
+        "--plugin",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Load a plugin file or directory in interactive mode (repeatable)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
     subparsers.add_parser("devices", help="List connected USB devices (for -d/--device)")
@@ -173,6 +180,7 @@ def main():
         sys.exit(1)
 
     device_spec = device_pre or getattr(args, "device", None) or os.environ.get("NRSUITE_DEVICE")
+    plugin_paths = list(getattr(args, "plugin", []) or [])
 
     fd_str = os.environ.get("TERMUX_USB_FD")
     if backend == "root":
@@ -182,7 +190,7 @@ def main():
             log(f"Device selector: {device_spec} (root backend uses first matching libusb device)", C.YELLOW)
         if args.command == "interact":
             from .interpreter import run_interpreter
-            run_interpreter(auto_connect=bool(device_spec))
+            run_interpreter(auto_connect=bool(device_spec), plugin_paths=plugin_paths)
         elif args.command == "scan":
             do_scan()
         elif args.command == "sniff":
@@ -203,7 +211,7 @@ def main():
         print("\033[0;93m[*]\033[0m Backend: termux-api (no-root)", file=sys.stderr)
         if args.command == "interact" and not device_spec:
             from .interpreter import run_interpreter
-            run_interpreter(auto_connect=False)
+            run_interpreter(auto_connect=False, plugin_paths=plugin_paths)
         else:
             extra = argv_rest[1:]
             bootstrap(
@@ -216,7 +224,7 @@ def main():
         fd = int(fd_str)
         if args.command == "interact":
             from .interpreter import run_interpreter
-            run_interpreter(fd=fd, auto_connect=True)
+            run_interpreter(fd=fd, auto_connect=True, plugin_paths=plugin_paths)
         elif args.command == "scan":do_scan(fd=fd)
         elif args.command == "sniff":do_sniff(fd=fd, args=args)
         elif args.command == "deauth":do_deauth(fd=fd, args=args)

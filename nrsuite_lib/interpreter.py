@@ -12,6 +12,7 @@ first version.
 import cmd
 import difflib
 import json
+import os
 import shlex
 
 from .cli import build_parser
@@ -28,8 +29,11 @@ from .commands import (
 )
 from .devices import _enumerate_usb_paths, _launch_with_fd_tty, do_list_devices
 from .espbridge_compat import describe_device, detect_backend
+from .hooks import HookBus
+from .plugins import PluginManager
+from .post_scripts import register_builtin
 from .modules import ModuleRegistry
-from .config import ENTRYPOINT
+from .config import DATA_DIR, ENTRYPOINT
 from .session import NRSuiteSession
 from .ui import C, log
 
@@ -84,11 +88,33 @@ class NRSuiteInterpreter(cmd.Cmd):
         super().__init__()
         self.session = session
         self.registry = ModuleRegistry()
+        self.hooks = HookBus(on_error=self._hook_error)
+        self.plugin_manager = PluginManager(self.registry, self.hooks)
+        self.plugin_paths = []
+        self.post_script = None
+        register_builtin(self.registry)
         self.intro = (
             f"NRSuite interactive mode"
             f"{f' ({session.chip})' if session.chip else ''}."
             " Type 'help' for commands or 'exit' to quit."
         )
+
+    def _hook_error(self, event, exc):
+        self.stdout.write(f"{C.RED}[x] Hook error in {event}: {exc}{C.RESET}\n")
+
+    def load_plugins(self, paths) -> None:
+        self.plugin_paths = list(paths or [])
+        if not self.plugin_paths:
+            return
+        try:
+            loaded = self.plugin_manager.load_paths(self.plugin_paths)
+        except Exception as e:
+            self.stdout.write(f"{C.RED}[x] Plugin load failed: {e}{C.RESET}\n")
+            return
+        if loaded:
+            self.stdout.write(
+                f"{C.GREEN}[+] Loaded plugins: {', '.join(loaded)}{C.RESET}\n"
+            )
 
     @property
     def prompt(self):
@@ -273,6 +299,7 @@ class NRSuiteInterpreter(cmd.Cmd):
             else:
                 self.stdout.write(f"Module: {self.registry.current.name}\n")
                 self.stdout.write(self.registry.current.options_text(self.registry.values) + "\n")
+                self.stdout.write(f"  {'pscript':<16} current={self.post_script!r}\n")
             return False
         if what == "status":
             return self.do_status("")
@@ -298,6 +325,13 @@ class NRSuiteInterpreter(cmd.Cmd):
             return False
         name = args[0]
         raw = " ".join(args[1:])
+        if name.lower() in ("pscript", "post", "post_script"):
+            if self.registry.current is None:
+                self.stdout.write("[!] Select a module before setting a post script.\n")
+                return False
+            self.post_script = raw.strip()
+            self.stdout.write(f"{C.GREEN}[+] pscript => {self.post_script!r}{C.RESET}\n")
+            return False
         ok, message = self.registry.set_value(name, raw)
         color = C.GREEN if ok else C.YELLOW
         self.stdout.write((f"{color}[+] " if ok else f"{color}[!] ") + message + f"{C.RESET}\n")
@@ -306,6 +340,10 @@ class NRSuiteInterpreter(cmd.Cmd):
     def _cmd_unset(self, args) -> bool:
         if not args:
             self.stdout.write("[!] Usage: unset <option>\n")
+            return False
+        if args[0].lower() in ("pscript", "post", "post_script"):
+            self.post_script = None
+            self.stdout.write(f"{C.GREEN}[+] unset pscript{C.RESET}\n")
             return False
         ok, message = self.registry.unset_value(args[0])
         color = C.GREEN if ok else C.YELLOW
@@ -378,7 +416,10 @@ class NRSuiteInterpreter(cmd.Cmd):
             return False
 
         self.stdout.write(f"[*] Connecting to {device_path}...\n")
-        cmd = f"env NRSUITE_CHILD=1 python {ENTRYPOINT} interact"
+        plugin_args = "".join(
+            f" --plugin {shlex.quote(path)}" for path in self.plugin_paths
+        )
+        cmd = f"env NRSUITE_CHILD=1 python {ENTRYPOINT} interact{plugin_args}"
         try:
             _launch_with_fd_tty(device_path, cmd)
         except KeyboardInterrupt:
@@ -405,23 +446,98 @@ class NRSuiteInterpreter(cmd.Cmd):
             self.stdout.write(f"{C.GREEN}[+] Left module {name}{C.RESET}\n")
         return False
 
+    def _capture_files(self) -> set:
+        try:
+            return {
+                os.path.join(DATA_DIR, name)
+                for name in os.listdir(DATA_DIR)
+                if name.endswith(".pcap")
+            }
+        except Exception:
+            return set()
+
+    def _collect_capture_files(self, values, before: set) -> list:
+        files = []
+        output = values.get("output")
+        if output and output != "-":
+            files.append(output)
+        for path in sorted(self._capture_files() - before):
+            if path not in files:
+                files.append(path)
+        return files
+
+    def _run_post_script(self, context) -> None:
+        if not self.post_script:
+            return
+        entry = self.registry.post_scripts.get(self.post_script)
+        if not entry:
+            self.stdout.write(
+                f"{C.YELLOW}[!] Unknown post script: {self.post_script}{C.RESET}\n"
+            )
+            return
+        try:
+            result = entry["handler"](context)
+        except Exception as e:
+            context["post_result"] = {"ok": False, "error": str(e)}
+            self.stdout.write(f"{C.RED}[x] Post script failed: {e}{C.RESET}\n")
+            return
+        context["post_result"] = result
+        self.stdout.write(
+            f"{C.CYAN}[*] Post script {self.post_script}: {result}{C.RESET}\n"
+        )
+
     def _cmd_run(self) -> bool:
-        if self.registry.current is None:
+        module = self.registry.current
+        if module is None:
             self.stdout.write("[!] No module selected. Use 'use <module>' first.\n")
             return False
+
+        base_context = {
+            "module": module.name,
+            "values": dict(self.registry.values),
+            "argv": None,
+            "args": None,
+            "files": [],
+            "session": self.session,
+            "hooks": self.hooks,
+        }
+
+        # Plugin modules are invoked directly with the context object.
+        if getattr(module, "handler", None):
+            self.hooks.emit("pre_module", **base_context)
+            try:
+                result = module.handler(base_context)
+            except Exception as e:
+                result = {"ok": False, "error": str(e)}
+            base_context["result"] = result
+            self._run_post_script(base_context)
+            self.hooks.emit("post_module", **base_context)
+            return bool(result and result.get("stop"))
 
         try:
             argv = self.registry.build()
         except Exception as e:
-            self.stdout.write(f"[!] {e}\n")
+            self.stdout.write(f"{C.RED}[!] {e}{C.RESET}\n")
             return False
 
-        self.stdout.write(f"{C.CYAN}[*] Running: {' '.join(argv)}{C.RESET}\n")
         try:
             args = self.registry.parse(argv)
         except SystemExit:
             return False
-        return self._dispatch(args)
+
+        before_files = self._capture_files()
+        context = dict(base_context)
+        context["argv"] = argv
+        context["args"] = vars(args)
+
+        self.hooks.emit("pre_module", **context)
+        self.stdout.write(f"{C.CYAN}[*] Running: {' '.join(argv)}{C.RESET}\n")
+        stop = self._dispatch(args)
+        context["result"] = {"ok": True, "stop": stop}
+        context["files"] = self._collect_capture_files(self.registry.values, before_files)
+        self._run_post_script(context)
+        self.hooks.emit("post_module", **context)
+        return stop
 
     def _dispatch(self, args) -> bool:
         if args.command == "devices":
@@ -477,7 +593,7 @@ class NRSuiteInterpreter(cmd.Cmd):
         return False
 
 
-def run_interpreter(fd=None, auto_connect: bool = True) -> int:
+def run_interpreter(fd=None, auto_connect: bool = True, plugin_paths=None) -> int:
     """Open a shared session and run the foreground interpreter.
 
     auto_connect=False starts disconnected and lists available devices so the
@@ -494,6 +610,7 @@ def run_interpreter(fd=None, auto_connect: bool = True) -> int:
         do_list_devices()
 
     interp = NRSuiteInterpreter(session)
+    interp.load_plugins(plugin_paths or [])
     try:
         interp.cmdloop()
     except KeyboardInterrupt:

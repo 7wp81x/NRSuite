@@ -154,6 +154,11 @@ class BuildParserTests(unittest.TestCase):
         self.assertEqual(args.payload, "ducky.txt")
         self.assertTrue(args.masstorage)
 
+    def test_plugin_flag(self):
+        args = self.parser.parse_args(["--interact", "--plugin", "/tmp/p.py"])
+        self.assertTrue(args.interact)
+        self.assertEqual(args.plugin, ["/tmp/p.py"])
+
     def test_interact_flag(self):
         args = self.parser.parse_args(["--interact"])
         self.assertTrue(args.interact)
@@ -178,22 +183,30 @@ class MainInterpreterTests(unittest.TestCase):
 
     def test_interact_flag_starts_disconnected_interpreter(self):
         run_interpreter, bootstrap = self._run_main(["nrsuite", "--interact"])
-        run_interpreter.assert_called_once_with(auto_connect=False)
+        run_interpreter.assert_called_once_with(auto_connect=False, plugin_paths=[])
         bootstrap.assert_not_called()
 
     def test_interact_subcommand_starts_disconnected_interpreter(self):
         run_interpreter, bootstrap = self._run_main(["nrsuite", "interact"])
-        run_interpreter.assert_called_once_with(auto_connect=False)
+        run_interpreter.assert_called_once_with(auto_connect=False, plugin_paths=[])
         bootstrap.assert_not_called()
 
     def test_interact_with_device_autoconnects(self):
         run_interpreter, _ = self._run_main(["nrsuite", "--interact", "-d", "0"])
-        run_interpreter.assert_called_once_with(auto_connect=True)
+        run_interpreter.assert_called_once_with(auto_connect=True, plugin_paths=[])
 
     def test_termux_interact_without_device_is_disconnected(self):
         run_interpreter, bootstrap = self._run_main(["nrsuite", "interact"], backend="termux")
-        run_interpreter.assert_called_once_with(auto_connect=False)
+        run_interpreter.assert_called_once_with(auto_connect=False, plugin_paths=[])
         bootstrap.assert_not_called()
+
+    def test_interact_plugin_paths_are_forwarded(self):
+        run_interpreter, _ = self._run_main(
+            ["nrsuite", "--interact", "--plugin", "/tmp/p.py"]
+        )
+        run_interpreter.assert_called_once_with(
+            auto_connect=False, plugin_paths=["/tmp/p.py"]
+        )
 
 
 if __name__ == "__main__":
