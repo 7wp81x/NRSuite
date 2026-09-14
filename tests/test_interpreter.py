@@ -203,6 +203,25 @@ class InterpreterTests(unittest.TestCase):
         self.interp.default("show plugins")
         self.assertIn("0 plugin(s) loaded", strip_ansi(self.output()))
 
+    def test_post_script_result_is_printed_as_lines(self):
+        def handler(context):
+            return {"ok": True}
+
+        def post(context):
+            return {"ok": True, "file": "test.pcap", "packets": 1313}
+
+        self.interp.registry.register_dynamic("tool", "Test tool", handler)
+        self.interp.registry.register_post("post/test", post)
+        self.interp.default("use plug/tool")
+        self.interp.default("set pscript post/test")
+        self.interp.default("run")
+
+        output = strip_ansi(self.output())
+        self.assertIn("Post script post/test:", output)
+        self.assertIn("[+] Ok: True", output)
+        self.assertIn("[+] File: test.pcap", output)
+        self.assertIn("[+] Packets: 1313", output)
+
 
 if __name__ == "__main__":
     unittest.main()

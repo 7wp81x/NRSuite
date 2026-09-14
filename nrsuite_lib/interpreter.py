@@ -542,10 +542,29 @@ class NRSuiteInterpreter(cmd.Cmd):
             context["post_result"] = {"ok": False, "error": str(e)}
             self.stdout.write(f"{C.RED}[x] Post script failed: {e}{C.RESET}\n")
             return
+
         context["post_result"] = result
-        self.stdout.write(
-            f"{C.CYAN}[*] Post script {self.post_script}: {result}{C.RESET}\n"
-        )
+        self.stdout.write(f"{C.CYAN}[*] Post script {self.post_script}:{C.RESET}\n")
+        self._write_post_result(result)
+
+    def _write_post_result(self, result) -> None:
+        if isinstance(result, dict):
+            for key, value in result.items():
+                label = str(key).replace("_", " ").strip().title()
+                if str(key).lower() == "ok" and value is True:
+                    color = C.GREEN
+                    tag = "[+]"
+                elif str(key).lower() in ("error", "msg") and value:
+                    color = C.RED
+                    tag = "[x]"
+                else:
+                    color = C.GREEN
+                    tag = "[+]"
+                self.stdout.write(f"{color}{tag} {label}: {value}{C.RESET}\n")
+        elif result is None:
+            self.stdout.write(f"{C.GREEN}[+] ok: True{C.RESET}\n")
+        else:
+            self.stdout.write(f"{C.GREEN}[+] {result}{C.RESET}\n")
 
     def _cmd_run(self) -> bool:
         module = self.registry.current
