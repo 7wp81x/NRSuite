@@ -7,6 +7,9 @@
 #include "beacon.h"
 #include "mbedtls/base64.h"
 #include "Preferences.h"
+
+#define FW_VERSION "v1.2.0"
+
 #ifdef ENABLE_BLE_HID
 #include "ble_hid.h"
 #endif
@@ -21,6 +24,7 @@
     #define MSC_SUPPORTED 0
     #define HID_SUPPORTED 0
 #endif
+
 
 // ── Chip name ────────────────────────────────────────────────────────────────
 #if defined(CONFIG_IDF_TARGET_ESP32C3)
@@ -130,6 +134,25 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
         resp["uptime"]   = millis();
         resp["heap"]     = ESP.getFreeHeap();
         resp["chip"]     = CHIP_NAME;
+        resp["proto"]    = 1;
+        resp["fw"]       = FW_VERSION;
+        JsonArray features = resp["features"].to<JsonArray>();
+        features.add("wifi");
+        features.add("sniff");
+        features.add("deauth");
+        features.add("beacon");
+        features.add("portal");
+        features.add("portal_html_offset");
+        features.add("storage");
+        #ifdef ENABLE_BLE_HID
+            features.add("ble_hid");
+        #endif
+        #if MSC_SUPPORTED
+            features.add("msc");
+        #endif
+        #if HID_SUPPORTED
+            features.add("badusb");
+        #endif
         resp["sniffing"] = sniffer.active();
         resp["oversized_frames"] = proto.oversizedFrameCount();
         if (sniffer.active()) {
@@ -369,6 +392,8 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
 
         const char* b64data = doc["args"]["data"] | (const char*)nullptr;
         bool last           = doc["args"]["last"]  | false;
+        const bool hasOffset = !doc["args"]["offset"].isNull();
+        const size_t offset = hasOffset ? doc["args"]["offset"].as<size_t>() : 0;
 
         if (!b64data) {
             proto.sendResp(id, false, "missing data");
@@ -389,10 +414,12 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
         int ret = mbedtls_base64_decode(outBuf, outCap, &outLen,
                                         (const unsigned char*)b64data, b64len);
         if (ret == 0) {
-            portal.setHtmlChunk(outBuf, outLen, last);
-            char msg[32];
-            snprintf(msg, sizeof(msg), "ok %dB->%dB", (int)b64len, (int)outLen);
-            proto.sendResp(id, true);
+            const bool accepted = portal.setHtmlChunk(outBuf, outLen, last, offset, hasOffset);
+            if (accepted) {
+                proto.sendResp(id, true);
+            } else {
+                proto.sendResp(id, false, "html chunk rejected");
+            }
         } else {
             char msg[40];
             snprintf(msg, sizeof(msg), "b64 fail ret=%d", ret);
@@ -407,6 +434,7 @@ void handleCmd(uint8_t id, JsonDocument& doc) {
         resp["ok"] = true;
         resp["running"] = portal.isRunning();
         resp["html_size"] = portal.getBufferSize();
+        resp["html_expected"] = portal.getExpectedSize();
         resp["html_complete"] = portal.isComplete();
         String json; serializeJson(resp, json);
         proto.sendRaw(TYPE_RESP, id, (const uint8_t*)json.c_str(), json.length());
