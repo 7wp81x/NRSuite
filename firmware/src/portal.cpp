@@ -1,6 +1,10 @@
 #include "portal.h"
 #include "sniffer.h"
 
+namespace {
+constexpr size_t HTML_APPEND_MARGIN = 32;
+}  // namespace
+
 void PortalManager::begin(BridgeProtocol& proto) {
     _proto = &proto;
 }
@@ -170,37 +174,71 @@ bool PortalManager::start(const char* ssid, uint8_t channel, const uint8_t* targ
     return true;
 }
 
-void PortalManager::setHtmlChunk(const uint8_t* data, size_t len, bool isLast) {
+bool PortalManager::setHtmlChunk(const uint8_t* data, size_t len, bool isLast,
+                                size_t offset, bool hasOffset) {
     if (data && len > 0) {
-        // Grow buffer if no size was given upfront (fallback path)
-        if (_htmlLen + len > _htmlCap) {
-            size_t newCap = _htmlLen + len + 512;
-            uint8_t* grown = (uint8_t*)realloc(_htmlBuffer, newCap + 1);
-            if (!grown) {
-                return;
-            }
-            _htmlBuffer = grown;
-            _htmlCap    = newCap;
+        const size_t writeOffset = hasOffset ? offset : _htmlLen;
+
+        // Offset mode is idempotent: retrying a chunk overwrites the same
+        // range instead of appending it a second time. Reject gaps so a lost
+        // middle chunk is reported as an error instead of producing a hole.
+        if (hasOffset && writeOffset > _htmlLen) {
+            return false;
+        }
+        if (_htmlExpected > 0 && writeOffset + len > _htmlExpected) {
+            return false;
         }
 
-        memcpy(_htmlBuffer + _htmlLen, data, len);
-        _htmlLen += len;
-        _htmlBuffer[_htmlLen] = '\0';  // keep null-terminated for safe serving
+        if (writeOffset + len > _htmlCap) {
+            const size_t newCap = writeOffset + len + 512;
+            uint8_t* grown = (uint8_t*)realloc(_htmlBuffer, newCap + 1);
+            if (!grown) {
+                return false;
+            }
+            _htmlBuffer = grown;
+            _htmlCap = newCap;
+        }
+
+        if (writeOffset > _htmlLen) {
+            memset(_htmlBuffer + _htmlLen, 0, writeOffset - _htmlLen);
+        }
+
+        memcpy(_htmlBuffer + writeOffset, data, len);
+        if (writeOffset + len > _htmlLen) {
+            _htmlLen = writeOffset + len;
+        }
+        _htmlBuffer[_htmlLen] = '\0';
     }
 
     if (isLast) {
-        // Append closing tags if missing
-        const char* tail   = (const char*)_htmlBuffer;
-        bool hasClose = (_htmlLen >= 7 &&
-                         (strncasecmp(tail + _htmlLen - 7, "</html>", 7) == 0));
+        if (_htmlBuffer == nullptr) {
+            return _htmlExpected == 0;
+        }
+
+        // Append closing tags when the user supplied a fragment.
+        const char* tail = (const char*)_htmlBuffer;
+        const bool hasClose = (_htmlLen >= 7 &&
+                               (strncasecmp(tail + _htmlLen - 7, "</html>", 7) == 0));
         if (!hasClose) {
             const char* suffix = "</body></html>";
-            size_t slen = strlen(suffix);
-            if (_htmlLen + slen <= _htmlCap) {
-                memcpy(_htmlBuffer + _htmlLen, suffix, slen);
-                _htmlLen += slen;
-                _htmlBuffer[_htmlLen] = '\0';
+            const size_t slen = strlen(suffix);
+            if (_htmlLen + slen > _htmlCap) {
+                const size_t newCap = _htmlLen + slen + 1;
+                uint8_t* grown = (uint8_t*)realloc(_htmlBuffer, newCap + 1);
+                if (!grown) {
+                    return false;
+                }
+                _htmlBuffer = grown;
+                _htmlCap = newCap;
             }
+            memcpy(_htmlBuffer + _htmlLen, suffix, slen);
+            _htmlLen += slen;
+            _htmlBuffer[_htmlLen] = '\0';
+        }
+
+        // A final chunk is only complete when the declared payload arrived.
+        if (_htmlExpected > 0 && _htmlLen < _htmlExpected) {
+            return false;
         }
 
         _htmlComplete = true;
@@ -208,8 +246,13 @@ void PortalManager::setHtmlChunk(const uint8_t* data, size_t len, bool isLast) {
         JsonDocument dbg;
         dbg["type"] = "html_complete";
         dbg["size"] = _htmlLen;
-        if (_proto) _proto->sendEvent("debug", dbg);
+        dbg["expected"] = _htmlExpected;
+        if (_proto) {
+            _proto->sendEvent("debug", dbg);
+        }
     }
+
+    return true;
 }
 
 bool PortalManager::resetHtml(size_t expectedSize) {
@@ -221,6 +264,7 @@ bool PortalManager::resetHtml(size_t expectedSize) {
     _htmlBuffer  = nullptr;
     _htmlLen     = 0;
     _htmlCap     = 0;
+    _htmlExpected = 0;
     _htmlComplete = false;
 
     if (expectedSize == 0) {
@@ -231,18 +275,21 @@ bool PortalManager::resetHtml(size_t expectedSize) {
         return false;
     }
 
-    size_t freeHeap = ESP.getFreeHeap();
-    if (freeHeap < expectedSize + SAFETY_MARGIN) {
+    const size_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < expectedSize + HTML_APPEND_MARGIN + SAFETY_MARGIN) {
         return false;
     }
 
-    // +1 for null terminator so we can safely cast to const char* when serving
-    _htmlBuffer = (uint8_t*)malloc(expectedSize + 1);
+    // Keep some spare room for the closing-tag fallback while still tracking
+    // the exact expected length from the app.
+    const size_t capacity = expectedSize + HTML_APPEND_MARGIN;
+    _htmlBuffer = (uint8_t*)malloc(capacity + 1);
     if (!_htmlBuffer) {
         return false;
     }
     _htmlBuffer[0] = '\0';
-    _htmlCap = expectedSize;
+    _htmlCap = capacity;
+    _htmlExpected = expectedSize;
 
     return true;
 }
@@ -260,5 +307,6 @@ void PortalManager::stop() {
     _htmlBuffer  = nullptr;
     _htmlLen     = 0;
     _htmlCap     = 0;
+    _htmlExpected = 0;
     _htmlComplete = false;
 }

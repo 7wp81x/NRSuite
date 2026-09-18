@@ -11,12 +11,14 @@ public:
     void begin(BridgeProtocol& proto);
     bool start(const char* ssid, uint8_t channel, const uint8_t* targetBssid = nullptr);
     void stop();
-    void setHtmlChunk(const uint8_t* data, size_t len, bool isLast = false);
+    bool setHtmlChunk(const uint8_t* data, size_t len, bool isLast = false,
+                      size_t offset = 0, bool hasOffset = false);
     bool isRunning() const { return _running; }
     void update();   // call in loop()
 
     bool isComplete() const { return _htmlComplete; }
     size_t getBufferSize() const { return _htmlLen; }
+    size_t getExpectedSize() const { return _htmlExpected; }
     bool resetHtml(size_t expectedSize = 0);
 
 
@@ -31,6 +33,7 @@ private:
     bool _htmlComplete = false;
     size_t   _htmlLen    = 0;
     size_t   _htmlCap    = 0;
+    size_t   _htmlExpected = 0;
     TaskHandle_t _deauthTaskHandle = nullptr;
     static String _servedSnapshot;
     static void deauthTaskFn(void* pvParameters);
