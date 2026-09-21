@@ -1,5 +1,10 @@
 # NRSuite
 
+> **Notice:** Development has moved to the Android app. The Termux CLI version is no longer actively maintained.
+> Check out [NRSuite Android](https://github.com/7wp81x/NRSuite-Android) for the actively developed version.
+
+---
+
 Turn a $3 ESP32 into a wireless research toolkit for Termux. No root required.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
