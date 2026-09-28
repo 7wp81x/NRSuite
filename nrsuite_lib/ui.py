@@ -35,7 +35,12 @@ def log(msg: str, color=None, level: str = "info"):
     entry = f"{prefix}{msg}"
     colored_entry = f"{color}{entry}{C.RESET}"
 
-    if not config.IS_CHILD:
+    try:
+        stderr_is_tty = sys.stderr.isatty()
+    except Exception:
+        stderr_is_tty = False
+
+    if not config.IS_CHILD or stderr_is_tty:
         print(colored_entry, file=sys.stderr, flush=True)
 
     with open(config.LOG_FILE, "a") as f:

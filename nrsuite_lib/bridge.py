@@ -17,7 +17,24 @@ from .espbridge_compat import (
 )
 
 
+_ACTIVE_SESSION = None
+
+
+def set_active_session(session) -> None:
+    """Attach an interpreter session so command handlers reuse its bridge."""
+    global _ACTIVE_SESSION
+    _ACTIVE_SESSION = session
+
+
+def clear_active_session() -> None:
+    global _ACTIVE_SESSION
+    _ACTIVE_SESSION = None
+
+
 def _setup_bridge(fd=None, reset=False):
+    if _ACTIVE_SESSION is not None:
+        return _ACTIVE_SESSION.proxy_bundle()
+
     if fd is None:
         log("Backend: \033[0;92mroot (direct libusb)\033[0m", C.GREEN)
         device = wrap_direct()

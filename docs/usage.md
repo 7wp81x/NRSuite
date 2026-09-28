@@ -13,6 +13,127 @@ All commands follow the same pattern — the script detects the USB device, requ
 
 ESP32-S2 is **supported and tested** for WiFi, USB mass storage, and BadUSB over native USB-OTG. See [Hardware](hardware.md) for details.
 
+## Interactive mode
+
+Keep one USB bridge open and run commands from a single prompt:
+
+```bash
+./nrsuite --interact
+./nrsuite interact
+```
+
+Interactive mode starts **disconnected** by default. It shows the backend and
+available USB devices, then waits for you to choose one:
+
+```text
+[*] Backend: termux-api (no-root)
+[*] USB devices:
+  [0] /dev/bus/usb/002/033
+  [1] /dev/bus/usb/002/034
+
+(nrsuite) > use device 0
+[*] Connecting to /dev/bus/usb/002/033...
+```
+
+After the Termux permission callback runs, you get a connected prompt:
+
+```text
+(nrsuite:ESP32-S3) > status
+(nrsuite:ESP32-S3) > scan
+(nrsuite:ESP32-S3) > sniff --channel 6 -o capture.pcap
+(nrsuite:ESP32-S3) > disconnect
+```
+
+Useful device commands:
+
+```text
+show devices
+use device 0
+use device /dev/bus/usb/002/033
+disconnect
+```
+
+### Module mode
+
+Module mode gives a MetaSploit-style `use / set / run` workflow:
+
+```text
+(nrsuite:ESP32-S3) > show modules
+(nrsuite:ESP32-S3) > use wifi/portal
+(nrsuite:ESP32-S3:wifi/portal) > show options
+(nrsuite:ESP32-S3:wifi/portal) > set action start
+(nrsuite:ESP32-S3:wifi/portal) > set ssid "Lab WiFi"
+(nrsuite:ESP32-S3:wifi/portal) > run
+(nrsuite:ESP32-S3:wifi/portal) > back
+```
+
+`show modules` lists all modules. `use wifi` lists all `wifi/*` modules.
+`show options` lists the active module's options and current values.
+`help <topic>` shows a module or group's help.
+
+### Plugins
+
+Load a plugin file or directory explicitly:
+
+```bash
+./nrsuite interact --plugin ~/.config/nrsuite/plugins
+```
+
+NRSuite also auto-loads user plugins and post scripts from:
+
+```text
+~/.config/nrsuite/plugins/
+~/.config/nrsuite/posts/
+```
+
+Use `show plugins` and `show posts` to list what was loaded, including counts.
+
+A plugin is a Python file with a `register(api)` function:
+
+```python
+def handler(context):
+    return {"ok": True}
+
+def register(api):
+    api.register_module("my_tool", handler, "Example plugin module")
+    api.on("post_module", lambda event, payload: None)
+```
+
+Then use it like a normal module:
+
+```text
+(nrsuite) > use plug/my_tool
+(nrsuite:plug/my_tool) > run
+```
+
+Plugins are trusted Python code. Do not load plugins you did not write or audit.
+
+### Post scripts
+
+Post scripts run automatically after a module finishes:
+
+```text
+(nrsuite:ESP32-S3) > use wifi/sniff
+(nrsuite:ESP32-S3:wifi/sniff) > set pscript post/wifi/count_packet
+(nrsuite:ESP32-S3:wifi/sniff) > run
+```
+
+The built-in `post/wifi/count_packet` post script reads the most recent `.pcap`
+produced by the module and reports the packet count.
+
+### Terminal
+
+```text
+clear
+cls
+```
+
+Clear the interpreter screen.
+
+Flat one-shot commands (`./nrsuite scan`, `./nrsuite sniff ...`, etc.) are
+unchanged. Interpreter mode is currently foreground-only: one command runs at
+a time and background jobs/plugins are a later addition.
+
 ## Scan nearby networks
 
 ```bash
